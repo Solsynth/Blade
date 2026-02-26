@@ -4,6 +4,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httputil"
+	"net/url"
 	"strings"
 
 	"github.com/dysonnetwork/gateway/internal/config"
@@ -142,24 +143,38 @@ func (p *Proxy) handleProxyWithPath(c *gin.Context, serviceName string, newPath 
 }
 
 func (p *Proxy) proxyRequest(c *gin.Context, target string) {
+	targetURL, err := url.Parse(target)
+	if err != nil || targetURL.Host == "" {
+		logging.Log.Error().
+			Err(err).
+			Str("target", target).
+			Msg("Invalid proxy target URL")
+		c.JSON(http.StatusBadGateway, gin.H{
+			"error": "invalid upstream target",
+			"code":  "UPSTREAM_TARGET_INVALID",
+		})
+		return
+	}
+
 	director := func(req *http.Request) {
-		req.URL.Scheme = "http"
-		req.URL.Host = strings.TrimPrefix(target, "http://")
-
-		if !strings.Contains(req.URL.Host, ":") {
-			if idx := strings.Index(req.URL.Host, "/"); idx != -1 {
-				req.URL.Host = req.URL.Host[:idx]
-			}
-		}
-
 		originalPath := req.URL.Path
-		if idx := strings.Index(target, req.URL.Host); idx != -1 {
-			remaining := target[idx+len(req.URL.Host):]
-			if remaining != "" && remaining != "/" {
-				req.URL.Path = remaining
-				if strings.Contains(req.URL.Path, "?") {
-					req.URL.Path = strings.Split(req.URL.Path, "?")[0]
-				}
+
+		req.URL.Scheme = targetURL.Scheme
+		if req.URL.Scheme == "" {
+			req.URL.Scheme = "http"
+		}
+		req.URL.Host = targetURL.Host
+		req.URL.Path = targetURL.Path
+		if req.URL.Path == "" {
+			req.URL.Path = "/"
+		}
+		req.URL.RawPath = targetURL.RawPath
+
+		if targetURL.RawQuery != "" {
+			if req.URL.RawQuery != "" {
+				req.URL.RawQuery = targetURL.RawQuery + "&" + req.URL.RawQuery
+			} else {
+				req.URL.RawQuery = targetURL.RawQuery
 			}
 		}
 
@@ -168,6 +183,7 @@ func (p *Proxy) proxyRequest(c *gin.Context, target string) {
 		logging.Log.Debug().
 			Str("original", originalPath).
 			Str("target", req.URL.Path).
+			Str("query", req.URL.RawQuery).
 			Str("host", req.URL.Host).
 			Msg("Proxying request")
 	}
