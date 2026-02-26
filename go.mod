@@ -1,4 +1,4 @@
-module github.com/dysonnetwork/gateway
+module git.solsynth.dev/solarnetwork/blade
 
 go 1.23
 

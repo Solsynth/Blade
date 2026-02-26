@@ -8,11 +8,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/dysonnetwork/gateway/internal/config"
-	"github.com/dysonnetwork/gateway/internal/health"
-	"github.com/dysonnetwork/gateway/internal/logging"
-	"github.com/dysonnetwork/gateway/internal/middleware"
-	"github.com/dysonnetwork/gateway/internal/proxy"
+	"git.solsynth.dev/solarnetwork/blade/internal/config"
+	"git.solsynth.dev/solarnetwork/blade/internal/health"
+	"git.solsynth.dev/solarnetwork/blade/internal/logging"
+	"git.solsynth.dev/solarnetwork/blade/internal/middleware"
+	"git.solsynth.dev/solarnetwork/blade/internal/proxy"
 	"github.com/gin-gonic/gin"
 )
 
