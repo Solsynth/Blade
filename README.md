@@ -1,6 +1,9 @@
-# Dyson Network Gateway
+# Blade
 
 An API Gateway built in Go using Gin, ported from the .NET YARP-based gateway.
+
+In fact, it's not the next generation gateway, it's the prev generation.
+Because Solar Network is built by pure Go at the v2, and migrated to .NET at v3, now we planned to move some core services to Go again.
 
 ## Features
 
@@ -78,11 +81,11 @@ service = "ring"
 
 ### Environment Variables
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `CONFIG_PATH` | Path to config file | `configs/config.toml` |
-| `GIN_MODE` | `debug` or `release` | `debug` |
-| `ZEROLOG_PRETTY` | Enable pretty logging | `false` |
+| Variable         | Description           | Default               |
+| ---------------- | --------------------- | --------------------- |
+| `CONFIG_PATH`    | Path to config file   | `configs/config.toml` |
+| `GIN_MODE`       | `debug` or `release`  | `debug`               |
+| `ZEROLOG_PRETTY` | Enable pretty logging | `false`               |
 
 ### Special Routes Configuration
 
@@ -108,12 +111,12 @@ target = "/activitypub"
 prefix = true           # true for wildcard matching
 ```
 
-| Field | Description |
-|-------|-------------|
-| `path` | Source path to match (e.g., `/ws`, `/.well-known/openid-configuration`) |
-| `service` | Target service name |
-| `target` | Path on the backend service |
-| `prefix` | If `true`, match path as prefix (e.g., `/activitypub/**`) |
+| Field     | Description                                                             |
+| --------- | ----------------------------------------------------------------------- |
+| `path`    | Source path to match (e.g., `/ws`, `/.well-known/openid-configuration`) |
+| `service` | Target service name                                                     |
+| `target`  | Path on the backend service                                             |
+| `prefix`  | If `true`, match path as prefix (e.g., `/activitypub/**`)               |
 
 ## Build & Run
 
@@ -145,14 +148,14 @@ docker run -p 6000:6000 -v ./config.toml:/app/configs/config.toml dyson-gateway
 
 ## Endpoints
 
-| Endpoint | Description |
-|----------|-------------|
-| `GET /health` | Gateway health status |
-| `/<service>/**` | Proxied to backend service (e.g., `/ring/**` → `ring:5000/api/**`) |
-| `/ws/**` | WebSocket (configurable via `specialRoutes.routes`) |
-| `/.well-known/*` | .well-known endpoints (configurable via `specialRoutes.routes`) |
-| `/activitypub/**` | ActivityPub (configurable via `specialRoutes.routes`) |
-| `/swagger/<service>/**` | Swagger docs → service |
+| Endpoint                | Description                                                        |
+| ----------------------- | ------------------------------------------------------------------ |
+| `GET /health`           | Gateway health status                                              |
+| `/<service>/**`         | Proxied to backend service (e.g., `/ring/**` → `ring:5000/api/**`) |
+| `/ws/**`                | WebSocket (configurable via `specialRoutes.routes`)                |
+| `/.well-known/*`        | .well-known endpoints (configurable via `specialRoutes.routes`)    |
+| `/activitypub/**`       | ActivityPub (configurable via `specialRoutes.routes`)              |
+| `/swagger/<service>/**` | Swagger docs → service                                             |
 
 ## Request Flow
 
