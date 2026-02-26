@@ -62,6 +62,8 @@ func main() {
 
 	r.GET("/health", func(c *gin.Context) {
 		states := store.GetAllStates()
+		coreServiceHealthy := store.IsCoreServiceHealthy()
+
 		allHealthy := true
 		for _, state := range states {
 			if !state.IsHealthy {
@@ -70,14 +72,18 @@ func main() {
 			}
 		}
 
-		status := http.StatusOK
-		if !allHealthy {
-			status = http.StatusServiceUnavailable
+		if !coreServiceHealthy {
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"status":     states,
+				"ready":      coreServiceHealthy,
+				"aggregated": allHealthy,
+			})
+			return
 		}
 
-		c.JSON(status, gin.H{
+		c.JSON(http.StatusOK, gin.H{
 			"status":     states,
-			"ready":      store.IsCoreServiceHealthy(),
+			"ready":      coreServiceHealthy,
 			"aggregated": allHealthy,
 		})
 	})
