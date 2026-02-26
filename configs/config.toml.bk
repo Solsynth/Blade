@@ -5,7 +5,7 @@ serializer = "JSON"
 
 [services]
 ring = { http = "http://ring:5000", grpc = "ring:5001" }
-pass = { http = "http://localhost:7003", grpc = "pass:5001" }
+pass = { http = "http://pass:5000", grpc = "pass:5001" }
 drive = { http = "http://drive:5000", grpc = "drive:5001" }
 sphere = { http = "http://sphere:5000", grpc = "sphere:5001" }
 develop = { http = "http://develop:5000", grpc = "develop:5001" }
@@ -16,18 +16,7 @@ wallet = { http = "http://wallet:5000", grpc = "wallet:5001" }
 ideask = { http = "http://ideask:5000", grpc = "ideask:5001" }
 
 [endpoints]
-serviceNames = [
-  "ring",
-  "pass",
-  "drive",
-  "sphere",
-  "develop",
-  "insight",
-  "zone",
-  "messager",
-  "wallet",
-  "ideask",
-]
+serviceNames = ["ring", "pass", "drive", "sphere", "develop", "insight", "zone", "messager", "wallet", "ideask"]
 coreServiceNames = ["ring", "pass", "drive", "sphere"]
 
 [rateLimit]

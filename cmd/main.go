@@ -13,6 +13,7 @@ import (
 	"git.solsynth.dev/solarnetwork/blade/internal/logging"
 	"git.solsynth.dev/solarnetwork/blade/internal/middleware"
 	"git.solsynth.dev/solarnetwork/blade/internal/proxy"
+	"git.solsynth.dev/solarnetwork/blade/internal/wsgateway"
 	"github.com/gin-gonic/gin"
 )
 
@@ -57,6 +58,41 @@ func main() {
 	r.Use(middleware.CORS())
 
 	r.Use(health.ReadinessMiddleware(store))
+
+	if cfg.WebSocketGateway.Enabled {
+		authService := cfg.WebSocketGateway.AuthService
+		if authService == "" {
+			authService = "pass"
+		}
+		authTarget := config.GetServiceGRPC(authService)
+		if authTarget == "" {
+			logging.Log.Fatal().Str("service", authService).Msg("WebSocket gateway auth service GRPC endpoint is not configured")
+		}
+
+		allowedAlt := make(map[string]struct{}, len(cfg.WebSocketGateway.AllowedDeviceAltern))
+		for _, alt := range cfg.WebSocketGateway.AllowedDeviceAltern {
+			allowedAlt[alt] = struct{}{}
+		}
+
+		wsCfg := wsgateway.Config{
+			KeepAliveInterval: time.Duration(cfg.WebSocketGateway.KeepAliveSeconds) * time.Second,
+			MaxMessageBytes:   cfg.WebSocketGateway.MaxMessageBytes,
+			AllowedDeviceAlt:  allowedAlt,
+		}
+		wsService := wsgateway.NewService(wsCfg, nil, nil, nil)
+		wsAuth, err := wsgateway.NewGRPCTokenAuthenticator(authTarget)
+		if err != nil {
+			logging.Log.Fatal().Err(err).Str("authTarget", authTarget).Msg("Failed to create websocket auth client")
+		}
+		wsHandler := wsgateway.NewHTTPHandler(wsAuth, wsService, wsCfg)
+		wsPath := cfg.WebSocketGateway.Path
+		if wsPath == "" {
+			wsPath = "/ws"
+		}
+		r.GET(wsPath, wsHandler.Handle)
+
+		logging.Log.Info().Str("path", wsPath).Str("authService", authService).Str("authTarget", authTarget).Msg("WebSocket gateway enabled")
+	}
 
 	r.NoRoute(proxyHandler.Handler())
 

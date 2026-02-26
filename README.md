@@ -53,6 +53,13 @@ port = "6000"
 readTimeout = 60
 writeTimeout = 60
 
+[websocketGateway]
+enabled = true
+path = "/ws"
+keepAliveSeconds = 60
+maxMessageBytes = 4096
+allowedDeviceAlternatives = ["watch"]
+
 [specialRoutes]
 
 [specialRoutes.websocket]
@@ -92,12 +99,6 @@ service = "ring"
 The gateway supports fully configurable special routes:
 
 ```toml
-[[specialRoutes.routes]]
-path = "/ws"           # source path to match
-service = "ring"        # target service name
-target = "/api/ws"      # path sent to backend
-prefix = false          # if true, match path prefix
-
 [[specialRoutes.routes]]
 path = "/.well-known/openid-configuration"
 service = "pass"
@@ -152,10 +153,18 @@ docker run -p 6000:6000 -v ./config.toml:/app/configs/config.toml dyson-gateway
 | ----------------------- | ------------------------------------------------------------------ |
 | `GET /health`           | Gateway health status                                              |
 | `/<service>/**`         | Proxied to backend service (e.g., `/ring/**` → `ring:5000/api/**`) |
-| `/ws/**`                | WebSocket (configurable via `specialRoutes.routes`)                |
+| `/ws`                   | Native WebSocket gateway (configurable via `websocketGateway.path`) |
 | `/.well-known/*`        | .well-known endpoints (configurable via `specialRoutes.routes`)    |
 | `/activitypub/**`       | ActivityPub (configurable via `specialRoutes.routes`)              |
 | `/swagger/<service>/**` | Swagger docs → service                                             |
+
+### WebSocket Authentication Notes
+
+Current implementation follows `DysonTokenAuthHandler` behavior:
+
+- Token extraction order: `tk` query, `Authorization` header (`Bearer`, `AtField`, `AkField`), `AuthToken` cookie
+- Token validation: remote gRPC call to `DyAuthService/Authenticate` using the configured `websocketGateway.authService` target
+- Request IP is forwarded to auth service as `ip_address`
 
 ## Request Flow
 

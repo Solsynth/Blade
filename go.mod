@@ -1,6 +1,6 @@
 module git.solsynth.dev/solarnetwork/blade
 
-go 1.23
+go 1.25.6
 
 require (
 	github.com/gin-gonic/gin v1.10.0
@@ -10,6 +10,7 @@ require (
 )
 
 require (
+	git.solsynth.dev/solarnetwork/dysonproto v0.0.0-20260226151501-1512c4f2a52e // indirect
 	github.com/bytedance/sonic v1.11.6 // indirect
 	github.com/bytedance/sonic/loader v0.1.1 // indirect
 	github.com/cloudwego/base64x v0.1.4 // indirect
@@ -49,6 +50,8 @@ require (
 	golang.org/x/net v0.25.0 // indirect
 	golang.org/x/sys v0.20.0 // indirect
 	golang.org/x/text v0.15.0 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20240604185151-ef581f913117 // indirect
+	google.golang.org/grpc v1.64.0 // indirect
 	google.golang.org/protobuf v1.34.1 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect

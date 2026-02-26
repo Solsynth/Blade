@@ -8,14 +8,15 @@ import (
 )
 
 type Config struct {
-	Endpoints     EndpointsConfig     `mapstructure:"endpoints"`
-	Services      ServicesConfig      `mapstructure:"services"`
-	Cache         CacheConfig         `mapstructure:"cache"`
-	RateLimit     RateLimitConfig     `mapstructure:"rateLimit"`
-	Health        HealthConfig        `mapstructure:"health"`
-	Server        ServerConfig        `mapstructure:"server"`
-	SpecialRoutes SpecialRoutesConfig `mapstructure:"specialRoutes"`
-	SiteURL       string              `mapstructure:"siteUrl"`
+	Endpoints        EndpointsConfig        `mapstructure:"endpoints"`
+	Services         ServicesConfig         `mapstructure:"services"`
+	Cache            CacheConfig            `mapstructure:"cache"`
+	RateLimit        RateLimitConfig        `mapstructure:"rateLimit"`
+	Health           HealthConfig           `mapstructure:"health"`
+	Server           ServerConfig           `mapstructure:"server"`
+	SpecialRoutes    SpecialRoutesConfig    `mapstructure:"specialRoutes"`
+	WebSocketGateway WebSocketGatewayConfig `mapstructure:"websocketGateway"`
+	SiteURL          string                 `mapstructure:"siteUrl"`
 }
 
 type EndpointsConfig struct {
@@ -50,6 +51,15 @@ type ServerConfig struct {
 	WriteTimeout time.Duration `mapstructure:"writeTimeout"`
 }
 
+type WebSocketGatewayConfig struct {
+	Enabled             bool     `mapstructure:"enabled"`
+	Path                string   `mapstructure:"path"`
+	AuthService         string   `mapstructure:"authService"`
+	KeepAliveSeconds    int      `mapstructure:"keepAliveSeconds"`
+	MaxMessageBytes     int64    `mapstructure:"maxMessageBytes"`
+	AllowedDeviceAltern []string `mapstructure:"allowedDeviceAlternatives"`
+}
+
 type SpecialRoutesConfig struct {
 	Routes []RouteRule `mapstructure:"routes"`
 }
@@ -74,8 +84,15 @@ func Load(configPath string) (*Config, error) {
 	viper.SetDefault("server.readTimeout", 60*time.Second)
 	viper.SetDefault("server.writeTimeout", 60*time.Second)
 	viper.SetDefault("siteUrl", "http://localhost:3000")
+
+	viper.SetDefault("websocketGateway.enabled", true)
+	viper.SetDefault("websocketGateway.path", "/ws")
+	viper.SetDefault("websocketGateway.authService", "pass")
+	viper.SetDefault("websocketGateway.keepAliveSeconds", 60)
+	viper.SetDefault("websocketGateway.maxMessageBytes", 4096)
+	viper.SetDefault("websocketGateway.allowedDeviceAlternatives", []string{"watch"})
+
 	viper.SetDefault("specialRoutes.routes", []RouteRule{
-		{Path: "/ws", Service: "ring", Target: "/api/ws", Prefix: false},
 		{Path: "/.well-known/openid-configuration", Service: "pass", Target: "/auth/.well-known/openid-configuration", Prefix: false},
 		{Path: "/.well-known/jwks", Service: "pass", Target: "/auth/.well-known/jwks", Prefix: false},
 		{Path: "/.well-known/webfinger", Service: "sphere", Target: "/fediverse/.well-known/webfinger", Prefix: false},
