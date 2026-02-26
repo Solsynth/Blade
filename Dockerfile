@@ -9,7 +9,7 @@ RUN go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=1 GOOS=linux go build -o gateway ./cmd/main.go
+RUN CGO_ENABLED=1 GOOS=linux go build -o blade ./cmd/main.go
 
 FROM alpine:3.19
 
@@ -17,7 +17,7 @@ RUN apk add --no-cache ca-certificates tzdata
 
 WORKDIR /app
 
-COPY --from=builder /app/gateway .
+COPY --from=builder /app/blade .
 COPY --from=builder /app/configs ./configs
 
 EXPOSE 6000
@@ -25,4 +25,4 @@ EXPOSE 6000
 ENV GIN_MODE=release
 ENV ZEROLOG_PRETTY=true
 
-ENTRYPOINT ["./gateway"]
+ENTRYPOINT ["./blade"]
