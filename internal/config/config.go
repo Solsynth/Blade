@@ -8,13 +8,14 @@ import (
 )
 
 type Config struct {
-	Endpoints EndpointsConfig `mapstructure:"endpoints"`
-	Services  ServicesConfig  `mapstructure:"services"`
-	Cache     CacheConfig     `mapstructure:"cache"`
-	RateLimit RateLimitConfig `mapstructure:"rateLimit"`
-	Health    HealthConfig    `mapstructure:"health"`
-	Server    ServerConfig    `mapstructure:"server"`
-	SiteURL   string          `mapstructure:"siteUrl"`
+	Endpoints     EndpointsConfig     `mapstructure:"endpoints"`
+	Services      ServicesConfig      `mapstructure:"services"`
+	Cache         CacheConfig         `mapstructure:"cache"`
+	RateLimit     RateLimitConfig     `mapstructure:"rateLimit"`
+	Health        HealthConfig        `mapstructure:"health"`
+	Server        ServerConfig        `mapstructure:"server"`
+	SpecialRoutes SpecialRoutesConfig `mapstructure:"specialRoutes"`
+	SiteURL       string              `mapstructure:"siteUrl"`
 }
 
 type EndpointsConfig struct {
@@ -49,6 +50,17 @@ type ServerConfig struct {
 	WriteTimeout time.Duration `mapstructure:"writeTimeout"`
 }
 
+type SpecialRoutesConfig struct {
+	Routes []RouteRule `mapstructure:"routes"`
+}
+
+type RouteRule struct {
+	Path    string `mapstructure:"path"`    // source path pattern (e.g., "/ws", "/.well-known/openid-configuration")
+	Service string `mapstructure:"service"` // target service name
+	Target  string `mapstructure:"target"`  // target path on backend (e.g., "/api/ws", "/auth/.well-known/openid-configuration")
+	Prefix  bool   `mapstructure:"prefix"`  // if true, match path prefix (e.g., "/activitypub/**")
+}
+
 func Load(configPath string) (*Config, error) {
 	viper.SetConfigType("toml")
 	viper.SetConfigFile(configPath)
@@ -62,6 +74,14 @@ func Load(configPath string) (*Config, error) {
 	viper.SetDefault("server.readTimeout", 60*time.Second)
 	viper.SetDefault("server.writeTimeout", 60*time.Second)
 	viper.SetDefault("siteUrl", "http://localhost:3000")
+	viper.SetDefault("specialRoutes.routes", []RouteRule{
+		{Path: "/ws", Service: "ring", Target: "/api/ws", Prefix: false},
+		{Path: "/.well-known/openid-configuration", Service: "pass", Target: "/auth/.well-known/openid-configuration", Prefix: false},
+		{Path: "/.well-known/jwks", Service: "pass", Target: "/auth/.well-known/jwks", Prefix: false},
+		{Path: "/.well-known/webfinger", Service: "sphere", Target: "/fediverse/.well-known/webfinger", Prefix: false},
+		{Path: "/activitypub", Service: "sphere", Target: "/activitypub", Prefix: true},
+		{Path: "/api/activitypub", Service: "sphere", Target: "/activitypub", Prefix: true},
+	})
 
 	if err := viper.ReadInConfig(); err != nil {
 		return nil, fmt.Errorf("failed to read config: %w", err)

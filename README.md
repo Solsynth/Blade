@@ -9,7 +9,7 @@ An API Gateway built in Go using Gin, ported from the .NET YARP-based gateway.
 - **Readiness Gating** - Returns 503 if core services are unhealthy
 - **Rate Limiting** - 120 requests/minute per IP with burst allowance
 - **CORS Support** - Allows all origins with custom headers
-- **Special Routes** - `/ws`, `/.well-known/*`, `/activitypub/**`
+- **Special Routes** - Fully configurable route system via `specialRoutes.routes`
 - **Route Transforms** - Strips service prefix, adds `/api` prefix
 
 ## Configuration
@@ -49,6 +49,31 @@ checkIntervalSeconds = 10
 port = "6000"
 readTimeout = 60
 writeTimeout = 60
+
+[specialRoutes]
+
+[specialRoutes.websocket]
+service = "ring"
+
+[specialRoutes.activityPub]
+service = "sphere"
+path = "/activitypub"
+
+[[specialRoutes.wellKnown]]
+path = "/.well-known/openid-configuration"
+service = "pass"
+
+[[specialRoutes.wellKnown]]
+path = "/.well-known/jwks"
+service = "pass"
+
+[[specialRoutes.wellKnown]]
+path = "/.well-known/webfinger"
+service = "sphere"
+
+[[specialRoutes.swagger]]
+path = "swagger"
+service = "ring"
 ```
 
 ### Environment Variables
@@ -58,6 +83,37 @@ writeTimeout = 60
 | `CONFIG_PATH` | Path to config file | `configs/config.toml` |
 | `GIN_MODE` | `debug` or `release` | `debug` |
 | `ZEROLOG_PRETTY` | Enable pretty logging | `false` |
+
+### Special Routes Configuration
+
+The gateway supports fully configurable special routes:
+
+```toml
+[[specialRoutes.routes]]
+path = "/ws"           # source path to match
+service = "ring"        # target service name
+target = "/api/ws"      # path sent to backend
+prefix = false          # if true, match path prefix
+
+[[specialRoutes.routes]]
+path = "/.well-known/openid-configuration"
+service = "pass"
+target = "/auth/.well-known/openid-configuration"
+prefix = false
+
+[[specialRoutes.routes]]
+path = "/activitypub"
+service = "sphere"
+target = "/activitypub"
+prefix = true           # true for wildcard matching
+```
+
+| Field | Description |
+|-------|-------------|
+| `path` | Source path to match (e.g., `/ws`, `/.well-known/openid-configuration`) |
+| `service` | Target service name |
+| `target` | Path on the backend service |
+| `prefix` | If `true`, match path as prefix (e.g., `/activitypub/**`) |
 
 ## Build & Run
 
@@ -93,11 +149,9 @@ docker run -p 6000:6000 -v ./config.toml:/app/configs/config.toml dyson-gateway
 |----------|-------------|
 | `GET /health` | Gateway health status |
 | `/<service>/**` | Proxied to backend service (e.g., `/ring/**` → `ring:5000/api/**`) |
-| `/ws/**` | WebSocket to ring service |
-| `/.well-known/openid-configuration` | OIDC discovery → pass |
-| `/.well-known/jwks` | JWT keys → pass |
-| `/.well-known/webfinger` | Fediverse → sphere |
-| `/activitypub/**` | ActivityPub → sphere |
+| `/ws/**` | WebSocket (configurable via `specialRoutes.routes`) |
+| `/.well-known/*` | .well-known endpoints (configurable via `specialRoutes.routes`) |
+| `/activitypub/**` | ActivityPub (configurable via `specialRoutes.routes`) |
 | `/swagger/<service>/**` | Swagger docs → service |
 
 ## Request Flow

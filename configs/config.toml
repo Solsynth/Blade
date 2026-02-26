@@ -30,3 +30,39 @@ checkIntervalSeconds = 10
 port = "6000"
 readTimeout = 60
 writeTimeout = 60
+
+[[specialRoutes.routes]]
+path = "/ws"
+service = "ring"
+target = "/api/ws"
+prefix = false
+
+[[specialRoutes.routes]]
+path = "/.well-known/openid-configuration"
+service = "pass"
+target = "/auth/.well-known/openid-configuration"
+prefix = false
+
+[[specialRoutes.routes]]
+path = "/.well-known/jwks"
+service = "pass"
+target = "/auth/.well-known/jwks"
+prefix = false
+
+[[specialRoutes.routes]]
+path = "/.well-known/webfinger"
+service = "sphere"
+target = "/fediverse/.well-known/webfinger"
+prefix = false
+
+[[specialRoutes.routes]]
+path = "/activitypub"
+service = "sphere"
+target = "/activitypub"
+prefix = true
+
+[[specialRoutes.routes]]
+path = "/api/activitypub"
+service = "sphere"
+target = "/activitypub"
+prefix = true

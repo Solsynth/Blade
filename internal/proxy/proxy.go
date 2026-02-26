@@ -12,7 +12,8 @@ import (
 )
 
 type Proxy struct {
-	serviceURLs map[string]string
+	serviceURLs   map[string]string
+	specialRoutes config.SpecialRoutesConfig
 }
 
 func New(cfg *config.Config) *Proxy {
@@ -25,7 +26,8 @@ func New(cfg *config.Config) *Proxy {
 	}
 
 	return &Proxy{
-		serviceURLs: serviceURLs,
+		serviceURLs:   serviceURLs,
+		specialRoutes: cfg.SpecialRoutes,
 	}
 }
 
@@ -33,21 +35,22 @@ func (p *Proxy) Handler() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		path := c.Request.URL.Path
 
-		if path == "/ws" || strings.HasPrefix(path, "/ws/") {
-			p.handleWebSocket(c, "ring")
-			return
+		// Check special routes
+		for _, route := range p.specialRoutes.Routes {
+			matched := false
+			if route.Prefix {
+				matched = strings.HasPrefix(path, route.Path)
+			} else {
+				matched = path == route.Path || strings.HasPrefix(path, route.Path+"/")
+			}
+
+			if matched {
+				p.handleSpecialRoute(c, route)
+				return
+			}
 		}
 
-		if strings.HasPrefix(path, "/.well-known/") {
-			p.handleWellKnown(c)
-			return
-		}
-
-		if strings.HasPrefix(path, "/activitypub") || strings.HasPrefix(path, "/api/activitypub") {
-			p.handleProxy(c, "sphere", "/activitypub")
-			return
-		}
-
+		// Swagger route
 		if strings.HasPrefix(path, "/swagger/") {
 			parts := strings.SplitN(path[1:], "/", 3)
 			if len(parts) >= 2 {
@@ -60,6 +63,7 @@ func (p *Proxy) Handler() gin.HandlerFunc {
 			}
 		}
 
+		// Default service routing
 		parts := strings.SplitN(path[1:], "/", 2)
 		if len(parts) > 0 {
 			serviceName := parts[0]
@@ -82,26 +86,25 @@ func (p *Proxy) Handler() gin.HandlerFunc {
 	}
 }
 
-func (p *Proxy) handleWebSocket(c *gin.Context, serviceName string) {
-	p.handleProxy(c, serviceName, "")
-}
-
-func (p *Proxy) handleWellKnown(c *gin.Context) {
-	path := c.Request.URL.Path
-
-	switch path {
-	case "/.well-known/openid-configuration":
-		p.handleProxy(c, "pass", "/.well-known/openid-configuration")
-	case "/.well-known/jwks":
-		p.handleProxy(c, "pass", "/.well-known/jwks")
-	case "/.well-known/webfinger":
-		p.handleProxy(c, "sphere", "/.well-known/webfinger")
-	default:
-		c.JSON(http.StatusNotFound, gin.H{
-			"error": "endpoint not found",
-			"code":  "ENDPOINT_NOT_FOUND",
+func (p *Proxy) handleSpecialRoute(c *gin.Context, route config.RouteRule) {
+	baseURL := p.serviceURLs[route.Service]
+	if baseURL == "" {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "service not available",
+			"code":  "SERVICE_UNAVAILABLE",
 		})
+		return
 	}
+
+	target := baseURL + route.Target
+	if route.Prefix {
+		// Preserve the rest of the path after the prefix
+		path := c.Request.URL.Path
+		suffix := strings.TrimPrefix(path, route.Path)
+		target = baseURL + route.Target + suffix
+	}
+
+	p.proxyRequest(c, target)
 }
 
 func (p *Proxy) handleProxy(c *gin.Context, serviceName string, pathOverride string) {
