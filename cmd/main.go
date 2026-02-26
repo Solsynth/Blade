@@ -30,7 +30,18 @@ func main() {
 		logging.Log.Fatal().Err(err).Msg("Failed to load config")
 	}
 
-	logging.Log.Info().Msg("Starting Blade Gateway")
+	logging.Log.Info().
+		Str("configPath", configPath).
+		Int("specialRoutes", len(cfg.SpecialRoutes.Routes)).
+		Msg("Starting Blade Gateway")
+	for _, route := range cfg.SpecialRoutes.Routes {
+		logging.Log.Info().
+			Str("path", route.Path).
+			Str("service", route.Service).
+			Str("target", route.Target).
+			Bool("prefix", route.Prefix).
+			Msg("Configured special route")
+	}
 
 	store := health.NewReadinessStore(cfg.Endpoints.CoreServiceNames)
 	aggregator := health.NewAggregator(store, cfg)
