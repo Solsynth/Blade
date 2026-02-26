@@ -30,7 +30,7 @@ func main() {
 		logging.Log.Fatal().Err(err).Msg("Failed to load config")
 	}
 
-	logging.Log.Info().Msg("Starting Dyson Network Gateway")
+	logging.Log.Info().Msg("Starting Blade Gateway")
 
 	store := health.NewReadinessStore(cfg.Endpoints.CoreServiceNames)
 	aggregator := health.NewAggregator(store, cfg)
@@ -81,9 +81,9 @@ func main() {
 	addr := ":" + cfg.Server.Port
 	srv := &http.Server{
 		Addr:         addr,
-		Handler:      r,
-		ReadTimeout:  cfg.Server.ReadTimeout,
-		WriteTimeout: cfg.Server.WriteTimeout,
+		Handler:      r.Handler(),
+		ReadTimeout:  cfg.Server.ReadTimeout * time.Second,
+		WriteTimeout: cfg.Server.WriteTimeout * time.Second,
 	}
 
 	go func() {
