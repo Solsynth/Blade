@@ -48,11 +48,6 @@ func main() {
 
 	go aggregator.Start(context.Background())
 
-	rateLimiter := middleware.NewRateLimiter(
-		cfg.RateLimit.RequestsPerMinute,
-		cfg.RateLimit.BurstAllowance,
-	)
-
 	proxyHandler := proxy.New(cfg)
 
 	r := gin.New()
@@ -60,8 +55,6 @@ func main() {
 	r.Use(gin.Logger())
 
 	r.Use(middleware.CORS())
-
-	r.Use(rateLimiter.Middleware())
 
 	r.Use(health.ReadinessMiddleware(store))
 
