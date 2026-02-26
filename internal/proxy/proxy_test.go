@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/dysonnetwork/gateway/internal/config"
 	"github.com/gin-gonic/gin"
 )
 
@@ -46,5 +47,47 @@ func TestProxyRequest_TargetWithPortAndPath(t *testing.T) {
 	}
 	if gotQuery != "take=20&showFediverse=true" {
 		t.Fatalf("expected forwarded query, got %q", gotQuery)
+	}
+}
+
+func TestSpecialRouteWS_ProxiesToConfiguredTarget(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	var gotPath string
+	var gotQuery string
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotQuery = r.URL.RawQuery
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+
+	p := &Proxy{
+		serviceURLs: map[string]string{
+			"ring": upstream.URL,
+		},
+		specialRoutes: config.SpecialRoutesConfig{
+			Routes: []config.RouteRule{
+				{Path: "/ws", Service: "ring", Target: "/api/ws", Prefix: false},
+			},
+		},
+	}
+
+	r := gin.New()
+	r.NoRoute(p.Handler())
+
+	req := httptest.NewRequest(http.MethodGet, "/ws?tk=abc", nil)
+	rec := &closeNotifyRecorder{ResponseRecorder: httptest.NewRecorder()}
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200 from upstream, got %d", rec.Code)
+	}
+	if gotPath != "/api/ws" {
+		t.Fatalf("expected upstream path /api/ws, got %q", gotPath)
+	}
+	if gotQuery != "tk=abc" {
+		t.Fatalf("expected query tk=abc, got %q", gotQuery)
 	}
 }
