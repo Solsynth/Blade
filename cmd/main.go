@@ -11,8 +11,8 @@ import (
 	"git.solsynth.dev/solarnetwork/blade/internal/config"
 	"git.solsynth.dev/solarnetwork/blade/internal/health"
 	"git.solsynth.dev/solarnetwork/blade/internal/logging"
-	"git.solsynth.dev/solarnetwork/blade/internal/middleware"
 	"git.solsynth.dev/solarnetwork/blade/internal/proxy"
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 )
 
@@ -54,7 +54,16 @@ func main() {
 	r.Use(gin.Recovery())
 	r.Use(gin.Logger())
 
-	r.Use(middleware.CORS())
+	r.Use(cors.New(cors.Config{
+		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Length", "Content-Type"},
+		ExposeHeaders:    []string{"Content-Length", "X-Total", "X-NotReady"},
+		AllowCredentials: true,
+		AllowOriginFunc: func(origin string) bool {
+			return true
+		},
+		MaxAge: 12 * time.Hour,
+	}))
 
 	r.Use(health.ReadinessMiddleware(store))
 
