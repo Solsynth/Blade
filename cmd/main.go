@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -12,8 +13,11 @@ import (
 	"git.solsynth.dev/solarnetwork/blade/internal/health"
 	"git.solsynth.dev/solarnetwork/blade/internal/logging"
 	"git.solsynth.dev/solarnetwork/blade/internal/proxy"
+	"git.solsynth.dev/solarnetwork/blade/internal/wsgateway"
+	gen "git.solsynth.dev/solarnetwork/dysonproto/gen/go"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"google.golang.org/grpc"
 )
 
 func main() {
@@ -49,10 +53,12 @@ func main() {
 	go aggregator.Start(context.Background())
 
 	proxyHandler := proxy.New(cfg)
+	var wsService *wsgateway.Service
 
 	r := gin.New()
 	r.Use(gin.Recovery())
 	r.Use(gin.Logger())
+	isDebugMode := gin.Mode() == gin.DebugMode
 
 	r.Use(cors.New(cors.Config{
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"},
@@ -66,6 +72,99 @@ func main() {
 	}))
 
 	r.Use(health.ReadinessMiddleware(store))
+
+	if cfg.WebSocketGateway.Enabled {
+		authService := cfg.WebSocketGateway.AuthService
+		authGrpcTarget := config.GetServiceGrpc(authService)
+		if authGrpcTarget == "" {
+			logging.Log.Fatal().
+				Str("authService", authService).
+				Msg("WebSocket gateway enabled but auth service gRPC target is missing")
+		}
+
+		authenticator, err := wsgateway.NewGrpcTokenAuthenticator(wsgateway.GrpcAuthDialConfig{
+			Target:        authGrpcTarget,
+			UseTLS:        cfg.WebSocketGateway.AuthUseTLS,
+			TLSSkipVerify: cfg.WebSocketGateway.AuthTLSSkipVerify,
+			TLSServerName: cfg.WebSocketGateway.AuthTLSServerName,
+		})
+		if err != nil {
+			logging.Log.Fatal().
+				Err(err).
+				Str("authService", authService).
+				Str("grpcTarget", authGrpcTarget).
+				Msg("Failed to initialize websocket token authenticator")
+		}
+
+		wsCfg := wsgateway.Config{
+			KeepAliveInterval: time.Duration(cfg.WebSocketGateway.KeepAliveSeconds) * time.Second,
+			MaxMessageBytes:   cfg.WebSocketGateway.MaxMessageBytes,
+			AllowedDeviceAlt:  make(map[string]struct{}, len(cfg.WebSocketGateway.AllowedDeviceAltern)),
+		}
+		for _, alt := range cfg.WebSocketGateway.AllowedDeviceAltern {
+			wsCfg.AllowedDeviceAlt[alt] = struct{}{}
+		}
+
+		wsService = wsgateway.NewService(wsCfg, nil, nil, nil)
+		wsHandler := wsgateway.NewHttpHandler(authenticator, wsService, wsCfg)
+		r.GET(cfg.WebSocketGateway.Path, wsHandler.Handle)
+
+		if isDebugMode {
+			debugWs := r.Group("/debug/ws")
+			debugWs.GET("/summary", func(c *gin.Context) {
+				users := wsService.GetAllConnectedUserIDs()
+				devices := wsService.GetAllConnectedDeviceIDs()
+				c.JSON(http.StatusOK, gin.H{
+					"enabled":         true,
+					"path":            cfg.WebSocketGateway.Path,
+					"connectionCount": len(wsService.GetConnectionSnapshots()),
+					"userCount":       len(users),
+					"deviceCount":     len(devices),
+					"users":           users,
+					"devices":         devices,
+				})
+			})
+			debugWs.GET("/connections", func(c *gin.Context) {
+				connections := wsService.GetConnectionSnapshots()
+				c.JSON(http.StatusOK, gin.H{
+					"count":       len(connections),
+					"connections": connections,
+				})
+			})
+			debugWs.GET("/account/:accountId", func(c *gin.Context) {
+				accountID := c.Param("accountId")
+				devices := wsService.GetDevicesByAccount(accountID)
+				c.JSON(http.StatusOK, gin.H{
+					"accountId":   accountID,
+					"connected":   len(devices) > 0,
+					"deviceCount": len(devices),
+					"devices":     devices,
+				})
+			})
+			debugWs.GET("/device/:deviceId", func(c *gin.Context) {
+				deviceID := c.Param("deviceId")
+				accounts := wsService.GetAccountsByDevice(deviceID)
+				c.JSON(http.StatusOK, gin.H{
+					"deviceId":     deviceID,
+					"connected":    len(accounts) > 0,
+					"accountCount": len(accounts),
+					"accounts":     accounts,
+				})
+			})
+
+			logging.Log.Info().Msg("Registered debug websocket endpoints under /debug/ws")
+		}
+
+		logging.Log.Info().
+			Str("path", cfg.WebSocketGateway.Path).
+			Str("authService", authService).
+			Str("authGrpcTarget", authGrpcTarget).
+			Bool("authUseTLS", cfg.WebSocketGateway.AuthUseTLS).
+			Bool("authTLSSkipVerify", cfg.WebSocketGateway.AuthTLSSkipVerify).
+			Str("authTLSServerName", cfg.WebSocketGateway.AuthTLSServerName).
+			Int64("maxMessageBytes", cfg.WebSocketGateway.MaxMessageBytes).
+			Msg("Registered websocket gateway route")
+	}
 
 	r.NoRoute(proxyHandler.Handler())
 
@@ -112,6 +211,25 @@ func main() {
 		}
 	}()
 
+	var grpcSrv *grpc.Server
+	if cfg.GRPCServer.Enabled && wsService != nil {
+		grpcAddr := ":" + cfg.GRPCServer.Port
+		lis, err := net.Listen("tcp", grpcAddr)
+		if err != nil {
+			logging.Log.Fatal().Err(err).Str("port", cfg.GRPCServer.Port).Msg("Failed to listen gRPC server")
+		}
+
+		grpcSrv = grpc.NewServer()
+		gen.RegisterWebSocketServiceServer(grpcSrv, wsgateway.NewGRPCService(wsService))
+
+		go func() {
+			logging.Log.Info().Str("port", cfg.GRPCServer.Port).Msg("Starting gRPC server")
+			if err := grpcSrv.Serve(lis); err != nil {
+				logging.Log.Fatal().Err(err).Msg("Failed to start gRPC server")
+			}
+		}()
+	}
+
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
@@ -123,6 +241,19 @@ func main() {
 
 	if err := srv.Shutdown(ctx); err != nil {
 		logging.Log.Fatal().Err(err).Msg("Server forced to shutdown")
+	}
+	if grpcSrv != nil {
+		gracefulStopped := make(chan struct{})
+		go func() {
+			grpcSrv.GracefulStop()
+			close(gracefulStopped)
+		}()
+
+		select {
+		case <-gracefulStopped:
+		case <-ctx.Done():
+			grpcSrv.Stop()
+		}
 	}
 
 	logging.Log.Info().Msg("Server exited")

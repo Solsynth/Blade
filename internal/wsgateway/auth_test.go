@@ -47,3 +47,23 @@ func TestExtractToken_CookieFallback(t *testing.T) {
 		t.Fatalf("expected cookie token, got %q", got.Token)
 	}
 }
+
+func TestNormalizeAuthGRPCTarget_WithHTTPS(t *testing.T) {
+	target, useTLS := normalizeAuthGRPCTarget("https://localhost:7003", false)
+	if target != "localhost:7003" {
+		t.Fatalf("expected localhost:7003, got %q", target)
+	}
+	if !useTLS {
+		t.Fatal("expected TLS to be enabled for https target")
+	}
+}
+
+func TestNormalizeAuthGRPCTarget_WithPlainHost(t *testing.T) {
+	target, useTLS := normalizeAuthGRPCTarget("localhost:7003", true)
+	if target != "localhost:7003" {
+		t.Fatalf("expected localhost:7003, got %q", target)
+	}
+	if !useTLS {
+		t.Fatal("expected TLS flag to preserve explicit config for plain host target")
+	}
+}

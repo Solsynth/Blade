@@ -14,6 +14,7 @@ type Config struct {
 	RateLimit        RateLimitConfig        `mapstructure:"rateLimit"`
 	Health           HealthConfig           `mapstructure:"health"`
 	Server           ServerConfig           `mapstructure:"server"`
+	GRPCServer       GRPCServerConfig       `mapstructure:"grpcServer"`
 	SpecialRoutes    SpecialRoutesConfig    `mapstructure:"specialRoutes"`
 	WebSocketGateway WebSocketGatewayConfig `mapstructure:"websocketGateway"`
 	SiteURL          string                 `mapstructure:"siteUrl"`
@@ -51,10 +52,18 @@ type ServerConfig struct {
 	WriteTimeout time.Duration `mapstructure:"writeTimeout"`
 }
 
+type GRPCServerConfig struct {
+	Enabled bool   `mapstructure:"enabled"`
+	Port    string `mapstructure:"port"`
+}
+
 type WebSocketGatewayConfig struct {
 	Enabled             bool     `mapstructure:"enabled"`
 	Path                string   `mapstructure:"path"`
 	AuthService         string   `mapstructure:"authService"`
+	AuthUseTLS          bool     `mapstructure:"authUseTLS"`
+	AuthTLSSkipVerify   bool     `mapstructure:"authTlsSkipVerify"`
+	AuthTLSServerName   string   `mapstructure:"authTlsServerName"`
 	KeepAliveSeconds    int      `mapstructure:"keepAliveSeconds"`
 	MaxMessageBytes     int64    `mapstructure:"maxMessageBytes"`
 	AllowedDeviceAltern []string `mapstructure:"allowedDeviceAlternatives"`
@@ -83,11 +92,16 @@ func Load(configPath string) (*Config, error) {
 	viper.SetDefault("server.port", "6000")
 	viper.SetDefault("server.readTimeout", 60*time.Second)
 	viper.SetDefault("server.writeTimeout", 60*time.Second)
+	viper.SetDefault("grpcServer.enabled", true)
+	viper.SetDefault("grpcServer.port", "7001")
 	viper.SetDefault("siteUrl", "http://localhost:3000")
 
 	viper.SetDefault("websocketGateway.enabled", true)
 	viper.SetDefault("websocketGateway.path", "/ws")
 	viper.SetDefault("websocketGateway.authService", "pass")
+	viper.SetDefault("websocketGateway.authUseTLS", false)
+	viper.SetDefault("websocketGateway.authTlsSkipVerify", false)
+	viper.SetDefault("websocketGateway.authTlsServerName", "")
 	viper.SetDefault("websocketGateway.keepAliveSeconds", 60)
 	viper.SetDefault("websocketGateway.maxMessageBytes", 4096)
 	viper.SetDefault("websocketGateway.allowedDeviceAlternatives", []string{"watch"})

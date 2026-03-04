@@ -2,15 +2,18 @@ package wsgateway
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
 	gen "git.solsynth.dev/solarnetwork/dysonproto/gen/go"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
@@ -41,15 +44,65 @@ type GrpcTokenAuthenticator struct {
 	conn *grpc.ClientConn
 }
 
-func NewGrpcTokenAuthenticator(target string) (*GrpcTokenAuthenticator, error) {
+type GrpcAuthDialConfig struct {
+	Target        string
+	UseTLS        bool
+	TLSSkipVerify bool
+	TLSServerName string
+}
+
+func NewGrpcTokenAuthenticator(cfg GrpcAuthDialConfig) (*GrpcTokenAuthenticator, error) {
+	target, useTLS := normalizeAuthGRPCTarget(cfg.Target, cfg.UseTLS)
+	if target == "" {
+		return nil, errors.New("auth gRPC target is empty")
+	}
+
+	var transportCredentials credentials.TransportCredentials
+	if useTLS {
+		tlsCfg := &tls.Config{
+			MinVersion:         tls.VersionTLS12,
+			InsecureSkipVerify: cfg.TLSSkipVerify,
+		}
+		if cfg.TLSServerName != "" {
+			tlsCfg.ServerName = cfg.TLSServerName
+		}
+		transportCredentials = credentials.NewTLS(tlsCfg)
+	} else {
+		transportCredentials = insecure.NewCredentials()
+	}
+
 	conn, err := grpc.Dial(
 		target,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithTransportCredentials(transportCredentials),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("dial auth service: %w", err)
 	}
 	return &GrpcTokenAuthenticator{conn: conn}, nil
+}
+
+func normalizeAuthGRPCTarget(rawTarget string, useTLS bool) (string, bool) {
+	target := strings.TrimSpace(rawTarget)
+	if target == "" {
+		return "", useTLS
+	}
+
+	parsed, err := url.Parse(target)
+	if err != nil || parsed.Scheme == "" {
+		return target, useTLS
+	}
+
+	scheme := strings.ToLower(parsed.Scheme)
+	switch scheme {
+	case "grpc":
+		return parsed.Host, false
+	case "grpcs", "https":
+		return parsed.Host, true
+	case "http":
+		return parsed.Host, false
+	default:
+		return target, useTLS
+	}
 }
 
 func (a *GrpcTokenAuthenticator) Authenticate(ctx context.Context, tokenInfo TokenInfo, r *http.Request) (*AuthResult, error) {

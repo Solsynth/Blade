@@ -41,10 +41,16 @@ port = "6000"
 readTimeout = 60
 writeTimeout = 60
 
+[grpcServer]
+enabled = true
+port = "7001"
+
 [websocketGateway]
 enabled = true
 path = "/ws"
 authService = "pass"
+authUseTLS = true
+authTlsSkipVerify = true
 keepAliveSeconds = 60
 maxMessageBytes = 4096
 allowedDeviceAlternatives = ["watch"]
