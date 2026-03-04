@@ -54,28 +54,26 @@ func NewGrpcTokenAuthenticator(target string) (*GrpcTokenAuthenticator, error) {
 
 func (a *GrpcTokenAuthenticator) Authenticate(ctx context.Context, tokenInfo TokenInfo, r *http.Request) (*AuthResult, error) {
 	ip := extractIP(r)
-	resp := &gen.DyAuthenticateResponse{}
 	req := &gen.DyAuthenticateRequest{Token: tokenInfo.Token}
 	if ip != "" {
 		req.IpAddress = wrapperspb.String(ip)
 	}
 
-	if err := a.conn.Invoke(ctx, "/proto.DyAuthService/Authenticate", req, resp); err != nil {
-		return nil, err
-	}
+	client := gen.NewDyAuthServiceClient(a.conn)
 
-	if !resp.GetValid() {
+	if resp, err := client.Authenticate(ctx, req); err != nil {
+		return nil, err
+	} else if !resp.GetValid() {
 		msg := strings.TrimSpace(resp.GetMessage())
 		if msg == "" {
 			msg = "token is not valid"
 		}
 		return nil, errors.New(msg)
-	}
-	if resp.GetSession() == nil || resp.GetSession().GetAccount() == nil {
+	} else if resp.GetSession() == nil || resp.GetSession().GetAccount() == nil {
 		return nil, errors.New("session not found")
+	} else {
+		return &AuthResult{Account: resp.GetSession().GetAccount(), Session: resp.GetSession()}, nil
 	}
-
-	return &AuthResult{Account: resp.GetSession().GetAccount(), Session: resp.GetSession()}, nil
 }
 
 func extractToken(r *http.Request) (TokenInfo, bool) {

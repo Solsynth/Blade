@@ -1,5 +1,7 @@
 git.solsynth.dev/solarnetwork/dysonproto v0.0.0-20260226151501-1512c4f2a52e h1:fx/h1pnYN3d7lVNgOBDjF0NPJ2LeQIO1dH5uamkp1Z0=
 git.solsynth.dev/solarnetwork/dysonproto v0.0.0-20260226151501-1512c4f2a52e/go.mod h1:FU0e75B5M5QdMHt3d///0Eblpi/EYBzBEtiaBF0EyMw=
+git.solsynth.dev/solarnetwork/dysonproto v0.0.0-20260304153838-e73988bc7c14 h1:jaJfyZGi6EE/+jvZ5x/LXhR9LZJcix8xgaLAyGcNpjM=
+git.solsynth.dev/solarnetwork/dysonproto v0.0.0-20260304153838-e73988bc7c14/go.mod h1:FU0e75B5M5QdMHt3d///0Eblpi/EYBzBEtiaBF0EyMw=
 github.com/bytedance/sonic v1.13.3 h1:MS8gmaH16Gtirygw7jV91pDCN33NyMrPbN7qiYhEsF0=
 github.com/bytedance/sonic v1.13.3/go.mod h1:o68xyaF9u2gvVBuGHPlUVCy+ZfmNNO5ETf1+KgkJhz4=
 github.com/bytedance/sonic/loader v0.1.1/go.mod h1:ncP89zfokxS5LZrJxl5z0UJcsk4M4yY2JpfqGeCtNLU=

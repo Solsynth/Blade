@@ -4,29 +4,28 @@ siteUrl = "https://solian.app"
 serializer = "JSON"
 
 [services]
-ring = { http = "http://ring:5000", grpc = "ring:5001" }
-pass = { http = "http://localhost:7003", grpc = "pass:5001" }
-drive = { http = "http://drive:5000", grpc = "drive:5001" }
-sphere = { http = "http://sphere:5000", grpc = "sphere:5001" }
-develop = { http = "http://develop:5000", grpc = "develop:5001" }
-insight = { http = "http://insight:5000", grpc = "insight:5001" }
-zone = { http = "http://zone:5000", grpc = "zone:5001" }
-messager = { http = "http://messager:5000", grpc = "messager:5001" }
-wallet = { http = "http://wallet:5000", grpc = "wallet:5001" }
-ideask = { http = "http://ideask:5000", grpc = "ideask:5001" }
+ring = { http = "http://localhost:8001", grpc = "localhost:7002" }
+pass = { http = "http://localhost:8002", grpc = "localhost:7003" }
+drive = { http = "http://localhost:8003", grpc = "localhost:7004" }
+sphere = { http = "http://localhost:8004", grpc = "localhost:7005" }
+develop = { http = "http://localhost:8005", grpc = "localhost:7006" }
+insight = { http = "http://localhost:8006", grpc = "localhost:7007" }
+zone = { http = "http://localhost:8007", grpc = "localhost:7008" }
+messager = { http = "http://localhost:8008", grpc = "localhost:7009" }
+wallet = { http = "http://localhost:8009", grpc = "localhost:7010" }
 
 [endpoints]
 serviceNames = [
-  "ring",
-  "pass",
-  "drive",
-  "sphere",
-  "develop",
-  "insight",
-  "zone",
-  "messager",
-  "wallet",
-  "ideask",
+    "ring",
+    "pass",
+    "drive",
+    "sphere",
+    "develop",
+    "insight",
+    "zone",
+    "messager",
+    "wallet",
+    "ideask",
 ]
 coreServiceNames = ["ring", "pass", "drive", "sphere"]
 

@@ -53,7 +53,7 @@ func (h *HttpHandler) Handle(c *gin.Context) {
 
 	websocket.Handler(func(conn *websocket.Conn) {
 		h.service.HandleConnection(c.Request.Context(), auth.Account, deviceID, conn)
-	}).ServeHttp(c.Writer, c.Request)
+	}).ServeHTTP(c.Writer, c.Request)
 
 	logging.Log.Debug().Str("accountId", auth.Account.GetId()).Str("deviceId", deviceID).Msg("Accepted websocket connection")
 }

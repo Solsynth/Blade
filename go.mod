@@ -3,7 +3,7 @@ module git.solsynth.dev/solarnetwork/blade
 go 1.25.6
 
 require (
-	git.solsynth.dev/solarnetwork/dysonproto v0.0.0-20260226151501-1512c4f2a52e
+	git.solsynth.dev/solarnetwork/dysonproto v0.0.0-20260304153838-e73988bc7c14
 	github.com/gin-contrib/cors v1.7.6
 	github.com/gin-gonic/gin v1.10.1
 	github.com/rs/zerolog v1.33.0
