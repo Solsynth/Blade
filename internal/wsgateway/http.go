@@ -9,25 +9,25 @@ import (
 	"golang.org/x/net/websocket"
 )
 
-type HTTPHandler struct {
+type HttpHandler struct {
 	authenticator TokenAuthenticator
 	service       *Service
 	cfg           Config
 }
 
-func NewHTTPHandler(authenticator TokenAuthenticator, service *Service, cfg Config) *HTTPHandler {
+func NewHttpHandler(authenticator TokenAuthenticator, service *Service, cfg Config) *HttpHandler {
 	if cfg.KeepAliveInterval <= 0 {
 		cfg.KeepAliveInterval = 60 * time.Second
 	}
 
-	return &HTTPHandler{
+	return &HttpHandler{
 		authenticator: authenticator,
 		service:       service,
 		cfg:           cfg,
 	}
 }
 
-func (h *HTTPHandler) Handle(c *gin.Context) {
+func (h *HttpHandler) Handle(c *gin.Context) {
 	deviceAlt := c.Query("deviceAlt")
 	if deviceAlt != "" {
 		if _, ok := h.cfg.AllowedDeviceAlt[deviceAlt]; !ok {
@@ -53,7 +53,7 @@ func (h *HTTPHandler) Handle(c *gin.Context) {
 
 	websocket.Handler(func(conn *websocket.Conn) {
 		h.service.HandleConnection(c.Request.Context(), auth.Account, deviceID, conn)
-	}).ServeHTTP(c.Writer, c.Request)
+	}).ServeHttp(c.Writer, c.Request)
 
 	logging.Log.Debug().Str("accountId", auth.Account.GetId()).Str("deviceId", deviceID).Msg("Accepted websocket connection")
 }

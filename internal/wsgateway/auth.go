@@ -37,11 +37,11 @@ type TokenAuthenticator interface {
 	Authenticate(ctx context.Context, tokenInfo TokenInfo, r *http.Request) (*AuthResult, error)
 }
 
-type GRPCTokenAuthenticator struct {
+type GrpcTokenAuthenticator struct {
 	conn *grpc.ClientConn
 }
 
-func NewGRPCTokenAuthenticator(target string) (*GRPCTokenAuthenticator, error) {
+func NewGrpcTokenAuthenticator(target string) (*GrpcTokenAuthenticator, error) {
 	conn, err := grpc.Dial(
 		target,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
@@ -49,10 +49,10 @@ func NewGRPCTokenAuthenticator(target string) (*GRPCTokenAuthenticator, error) {
 	if err != nil {
 		return nil, fmt.Errorf("dial auth service: %w", err)
 	}
-	return &GRPCTokenAuthenticator{conn: conn}, nil
+	return &GrpcTokenAuthenticator{conn: conn}, nil
 }
 
-func (a *GRPCTokenAuthenticator) Authenticate(ctx context.Context, tokenInfo TokenInfo, r *http.Request) (*AuthResult, error) {
+func (a *GrpcTokenAuthenticator) Authenticate(ctx context.Context, tokenInfo TokenInfo, r *http.Request) (*AuthResult, error) {
 	ip := extractIP(r)
 	resp := &gen.DyAuthenticateResponse{}
 	req := &gen.DyAuthenticateRequest{Token: tokenInfo.Token}

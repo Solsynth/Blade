@@ -20,7 +20,7 @@ type Proxy struct {
 func New(cfg *config.Config) *Proxy {
 	serviceURLs := make(map[string]string)
 	for _, name := range cfg.Endpoints.ServiceNames {
-		url := config.GetServiceHTTP(name)
+		url := config.GetServiceHttp(name)
 		if url != "" {
 			serviceURLs[name] = url
 		}
@@ -197,5 +197,5 @@ func (p *Proxy) proxyRequest(c *gin.Context, target string) {
 		},
 	}
 
-	proxy.ServeHTTP(c.Writer, c.Request)
+	proxy.ServeHttp(c.Writer, c.Request)
 }

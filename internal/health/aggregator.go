@@ -20,7 +20,7 @@ type Aggregator struct {
 func NewAggregator(store *ReadinessStore, cfg *config.Config) *Aggregator {
 	services := make(map[string]string)
 	for _, name := range cfg.Endpoints.ServiceNames {
-		url := config.GetServiceHTTP(name)
+		url := config.GetServiceHttp(name)
 		if url != "" {
 			services[name] = url
 		}

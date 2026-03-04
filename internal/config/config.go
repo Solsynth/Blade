@@ -25,8 +25,8 @@ type EndpointsConfig struct {
 }
 
 type ServiceEndpoint struct {
-	HTTP string `mapstructure:"http"`
-	GRPC string `mapstructure:"grpc"`
+	Http string `mapstructure:"http"`
+	Grpc string `mapstructure:"grpc"`
 }
 
 type ServicesConfig map[string]ServiceEndpoint
@@ -114,10 +114,10 @@ func Load(configPath string) (*Config, error) {
 	return &cfg, nil
 }
 
-func GetServiceHTTP(serviceName string) string {
+func GetServiceHttp(serviceName string) string {
 	return viper.GetString(fmt.Sprintf("services.%s.http", serviceName))
 }
 
-func GetServiceGRPC(serviceName string) string {
+func GetServiceGrpc(serviceName string) string {
 	return viper.GetString(fmt.Sprintf("services.%s.grpc", serviceName))
 }
