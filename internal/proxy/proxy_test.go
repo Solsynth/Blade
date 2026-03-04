@@ -79,7 +79,7 @@ func TestSpecialRouteWS_ProxiesToConfiguredTarget(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/ws?tk=abc", nil)
 	rec := &closeNotifyRecorder{ResponseRecorder: httptest.NewRecorder()}
-	r.ServeHttp(rec, req)
+	r.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected status 200 from upstream, got %d", rec.Code)

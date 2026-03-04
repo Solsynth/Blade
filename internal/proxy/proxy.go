@@ -197,5 +197,5 @@ func (p *Proxy) proxyRequest(c *gin.Context, target string) {
 		},
 	}
 
-	proxy.ServeHttp(c.Writer, c.Request)
+	proxy.ServeHTTP(c.Writer, c.Request)
 }
