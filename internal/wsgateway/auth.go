@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	gen "git.solsynth.dev/solarnetwork/dysonproto/gen/go"
+	gen "git.solsynth.dev/sosys/spec/gen/go"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"

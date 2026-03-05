@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"git.solsynth.dev/solarnetwork/blade/internal/logging"
-	gen "git.solsynth.dev/solarnetwork/dysonproto/gen/go"
+	"git.solsynth.dev/sosys/blade/internal/logging"
+	gen "git.solsynth.dev/sosys/spec/gen/go"
 	"golang.org/x/net/websocket"
 )
 

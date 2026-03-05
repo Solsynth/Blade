@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"time"
 
-	"git.solsynth.dev/solarnetwork/blade/internal/config"
-	"git.solsynth.dev/solarnetwork/blade/internal/logging"
+	"git.solsynth.dev/sosys/blade/internal/config"
+	"git.solsynth.dev/sosys/blade/internal/logging"
 	"github.com/gin-gonic/gin"
 )
 

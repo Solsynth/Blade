@@ -3,7 +3,7 @@ package wsgateway
 import (
 	"encoding/json"
 
-	gen "git.solsynth.dev/solarnetwork/dysonproto/gen/go"
+	gen "git.solsynth.dev/sosys/spec/gen/go"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 

@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	gen "git.solsynth.dev/solarnetwork/dysonproto/gen/go"
+	gen "git.solsynth.dev/sosys/spec/gen/go"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
