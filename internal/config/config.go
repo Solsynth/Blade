@@ -11,10 +11,11 @@ type Config struct {
 	Endpoints        EndpointsConfig        `mapstructure:"endpoints"`
 	Services         ServicesConfig         `mapstructure:"services"`
 	Cache            CacheConfig            `mapstructure:"cache"`
+	NATS             NATSConfig             `mapstructure:"nats"`
 	RateLimit        RateLimitConfig        `mapstructure:"rateLimit"`
 	Health           HealthConfig           `mapstructure:"health"`
 	Server           ServerConfig           `mapstructure:"server"`
-	GRPCServer       GRPCServerConfig       `mapstructure:"grpcServer"`
+	GrpcServer       GrpcServerConfig       `mapstructure:"grpcServer"`
 	SpecialRoutes    SpecialRoutesConfig    `mapstructure:"specialRoutes"`
 	WebSocketGateway WebSocketGatewayConfig `mapstructure:"websocketGateway"`
 	SiteURL          string                 `mapstructure:"siteUrl"`
@@ -36,6 +37,11 @@ type CacheConfig struct {
 	Serializer string `mapstructure:"serializer"`
 }
 
+type NATSConfig struct {
+	URL                    string `mapstructure:"url"`
+	WebSocketSubjectPrefix string `mapstructure:"websocketSubjectPrefix"`
+}
+
 type RateLimitConfig struct {
 	RequestsPerMinute int `mapstructure:"requestsPerMinute"`
 	BurstAllowance    int `mapstructure:"burstAllowance"`
@@ -52,7 +58,7 @@ type ServerConfig struct {
 	WriteTimeout time.Duration `mapstructure:"writeTimeout"`
 }
 
-type GRPCServerConfig struct {
+type GrpcServerConfig struct {
 	Enabled bool   `mapstructure:"enabled"`
 	Port    string `mapstructure:"port"`
 }
@@ -86,6 +92,8 @@ func Load(configPath string) (*Config, error) {
 
 	viper.SetDefault("endpoints.serviceNames", []string{"ring", "pass", "drive", "sphere", "develop", "insight", "zone", "messager"})
 	viper.SetDefault("endpoints.coreServiceNames", []string{"ring", "pass", "drive", "sphere"})
+	viper.SetDefault("nats.url", "")
+	viper.SetDefault("nats.websocketSubjectPrefix", "websocket_")
 	viper.SetDefault("rateLimit.requestsPerMinute", 120)
 	viper.SetDefault("rateLimit.burstAllowance", 10)
 	viper.SetDefault("health.checkIntervalSeconds", 10)

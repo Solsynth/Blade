@@ -10,7 +10,11 @@ import (
 var Log zerolog.Logger
 
 func Init(pretty bool) {
-	zerolog.SetGlobalLevel(zerolog.InfoLevel)
+	if pretty {
+		zerolog.SetGlobalLevel(zerolog.DebugLevel)
+	} else {
+		zerolog.SetGlobalLevel(zerolog.InfoLevel)
+	}
 
 	if pretty {
 		output := zerolog.ConsoleWriter{

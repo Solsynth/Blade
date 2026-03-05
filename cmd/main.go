@@ -17,7 +17,9 @@ import (
 	gen "git.solsynth.dev/solarnetwork/dysonproto/gen/go"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"github.com/nats-io/nats.go"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/reflection"
 )
 
 func main() {
@@ -54,6 +56,7 @@ func main() {
 
 	proxyHandler := proxy.New(cfg)
 	var wsService *wsgateway.Service
+	var natsConn *nats.Conn
 
 	r := gin.New()
 	r.Use(gin.Recovery())
@@ -105,7 +108,25 @@ func main() {
 			wsCfg.AllowedDeviceAlt[alt] = struct{}{}
 		}
 
-		wsService = wsgateway.NewService(wsCfg, nil, nil, nil)
+		var forwarder wsgateway.UnknownPacketForwarder
+		natsURL := cfg.NATS.URL
+		if natsURL != "" {
+			natsConn, err = nats.Connect(natsURL)
+			if err != nil {
+				logging.Log.Fatal().Err(err).Str("natsURL", natsURL).Msg("Failed to connect to NATS")
+			}
+			forwarder = wsgateway.NewNatsForwarder(natsConn, wsgateway.NATSForwarderConfig{
+				SubjectPrefix: cfg.NATS.WebSocketSubjectPrefix,
+			})
+			logging.Log.Info().
+				Str("natsURL", natsURL).
+				Str("subjectPrefix", cfg.NATS.WebSocketSubjectPrefix).
+				Msg("Enabled websocket unknown packet forwarder via NATS")
+		} else {
+			logging.Log.Warn().Msg("NATS URL is empty; websocket unknown packet forwarding is disabled")
+		}
+
+		wsService = wsgateway.NewService(wsCfg, nil, forwarder, nil)
 		wsHandler := wsgateway.NewHttpHandler(authenticator, wsService, wsCfg)
 		r.GET(cfg.WebSocketGateway.Path, wsHandler.Handle)
 
@@ -212,18 +233,19 @@ func main() {
 	}()
 
 	var grpcSrv *grpc.Server
-	if cfg.GRPCServer.Enabled && wsService != nil {
-		grpcAddr := ":" + cfg.GRPCServer.Port
+	if cfg.GrpcServer.Enabled && wsService != nil {
+		grpcAddr := ":" + cfg.GrpcServer.Port
 		lis, err := net.Listen("tcp", grpcAddr)
 		if err != nil {
-			logging.Log.Fatal().Err(err).Str("port", cfg.GRPCServer.Port).Msg("Failed to listen gRPC server")
+			logging.Log.Fatal().Err(err).Str("port", cfg.GrpcServer.Port).Msg("Failed to listen gRPC server")
 		}
 
 		grpcSrv = grpc.NewServer()
 		gen.RegisterWebSocketServiceServer(grpcSrv, wsgateway.NewGRPCService(wsService))
+		reflection.Register(grpcSrv)
 
 		go func() {
-			logging.Log.Info().Str("port", cfg.GRPCServer.Port).Msg("Starting gRPC server")
+			logging.Log.Info().Str("port", cfg.GrpcServer.Port).Msg("Starting gRPC server")
 			if err := grpcSrv.Serve(lis); err != nil {
 				logging.Log.Fatal().Err(err).Msg("Failed to start gRPC server")
 			}
@@ -254,6 +276,9 @@ func main() {
 		case <-ctx.Done():
 			grpcSrv.Stop()
 		}
+	}
+	if natsConn != nil {
+		natsConn.Close()
 	}
 
 	logging.Log.Info().Msg("Server exited")

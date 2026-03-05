@@ -3,6 +3,10 @@ siteUrl = "https://solian.app"
 [cache]
 serializer = "JSON"
 
+[nats]
+url = "nats://nats:RE0zx7Qtady3Akyrn6eZXF@localhost:63769"
+websocketSubjectPrefix = "websocket_"
+
 [services]
 ring = { http = "http://localhost:8001", grpc = "localhost:7002" }
 pass = { http = "http://localhost:8002", grpc = "localhost:7003" }
