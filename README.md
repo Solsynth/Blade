@@ -10,7 +10,6 @@ Because Solar Network is built by pure Go at the v2, and migrated to .NET at v3,
 - **Reverse Proxy Routing** - Routes requests to backend microservices
 - **Health Monitoring** - Background health checks every 10 seconds
 - **Readiness Gating** - Returns 503 if core services are unhealthy
-- **Rate Limiting** - 120 requests/minute per IP with burst allowance
 - **CORS Support** - Allows all origins with custom headers
 - **Special Routes** - Fully configurable route system via `routes`
 - **Route Transforms** - Strips service prefix, adds `/api` prefix
@@ -128,9 +127,9 @@ docker run -p 6000:6000 -v ./config.toml:/app/configs/config.toml dyson-gateway
 | ----------------------- | ------------------------------------------------------------------ |
 | `GET /health`           | Gateway health status                                              |
 | `/<service>/**`         | Proxied to backend service (e.g., `/ring/**` → `ring:5000/api/**`) |
-| `/ws`                   | Native WebSocket gateway (configurable via `websocket.path`) |
-| `/.well-known/*`        | .well-known endpoints (configurable via `routes`)    |
-| `/activitypub/**`       | ActivityPub (configurable via `routes`)              |
+| `/ws`                   | Native WebSocket gateway (configurable via `websocket.path`)       |
+| `/.well-known/*`        | .well-known endpoints (configurable via `routes`)                  |
+| `/activitypub/**`       | ActivityPub (configurable via `routes`)                            |
 | `/swagger/<service>/**` | Swagger docs → service                                             |
 
 ### WebSocket Authentication Notes
