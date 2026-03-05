@@ -8,17 +8,17 @@ import (
 )
 
 type Config struct {
-	Endpoints        EndpointsConfig        `mapstructure:"endpoints"`
-	Services         ServicesConfig         `mapstructure:"services"`
-	Cache            CacheConfig            `mapstructure:"cache"`
-	NATS             NATSConfig             `mapstructure:"nats"`
-	RateLimit        RateLimitConfig        `mapstructure:"rateLimit"`
-	Health           HealthConfig           `mapstructure:"health"`
-	Server           ServerConfig           `mapstructure:"server"`
-	GrpcServer       GrpcServerConfig       `mapstructure:"grpcServer"`
-	SpecialRoutes    SpecialRoutesConfig    `mapstructure:"specialRoutes"`
-	WebSocketGateway WebSocketGatewayConfig `mapstructure:"websocketGateway"`
-	SiteURL          string                 `mapstructure:"siteUrl"`
+	Endpoints EndpointsConfig  `mapstructure:"endpoints"`
+	Services  ServicesConfig   `mapstructure:"services"`
+	Cache     CacheConfig      `mapstructure:"cache"`
+	NATS      NATSConfig       `mapstructure:"nats"`
+	RateLimit RateLimitConfig  `mapstructure:"rateLimit"`
+	Health    HealthConfig     `mapstructure:"health"`
+	Server    ServerConfig     `mapstructure:"server"`
+	GRPC      GrpcServerConfig `mapstructure:"grpc"`
+	WebSocket WebSocketConfig  `mapstructure:"websocket"`
+	Routes    []RouteRule      `mapstructure:"routes"`
+	SiteURL   string           `mapstructure:"siteUrl"`
 }
 
 type EndpointsConfig struct {
@@ -63,7 +63,7 @@ type GrpcServerConfig struct {
 	Port    string `mapstructure:"port"`
 }
 
-type WebSocketGatewayConfig struct {
+type WebSocketConfig struct {
 	Enabled             bool     `mapstructure:"enabled"`
 	Path                string   `mapstructure:"path"`
 	AuthService         string   `mapstructure:"authService"`
@@ -75,10 +75,6 @@ type WebSocketGatewayConfig struct {
 	AllowedDeviceAltern []string `mapstructure:"allowedDeviceAlternatives"`
 }
 
-type SpecialRoutesConfig struct {
-	Routes []RouteRule `mapstructure:"routes"`
-}
-
 type RouteRule struct {
 	Path    string `mapstructure:"path"`    // source path pattern (e.g., "/ws", "/.well-known/openid-configuration")
 	Service string `mapstructure:"service"` // target service name
@@ -87,6 +83,7 @@ type RouteRule struct {
 }
 
 func Load(configPath string) (*Config, error) {
+	viper.Reset()
 	viper.SetConfigType("toml")
 	viper.SetConfigFile(configPath)
 
@@ -100,21 +97,21 @@ func Load(configPath string) (*Config, error) {
 	viper.SetDefault("server.port", "6000")
 	viper.SetDefault("server.readTimeout", 60*time.Second)
 	viper.SetDefault("server.writeTimeout", 60*time.Second)
-	viper.SetDefault("grpcServer.enabled", true)
-	viper.SetDefault("grpcServer.port", "7001")
+	viper.SetDefault("grpc.enabled", true)
+	viper.SetDefault("grpc.port", "7001")
 	viper.SetDefault("siteUrl", "http://localhost:3000")
 
-	viper.SetDefault("websocketGateway.enabled", true)
-	viper.SetDefault("websocketGateway.path", "/ws")
-	viper.SetDefault("websocketGateway.authService", "pass")
-	viper.SetDefault("websocketGateway.authUseTLS", false)
-	viper.SetDefault("websocketGateway.authTlsSkipVerify", false)
-	viper.SetDefault("websocketGateway.authTlsServerName", "")
-	viper.SetDefault("websocketGateway.keepAliveSeconds", 60)
-	viper.SetDefault("websocketGateway.maxMessageBytes", 4096)
-	viper.SetDefault("websocketGateway.allowedDeviceAlternatives", []string{"watch"})
+	viper.SetDefault("websocket.enabled", true)
+	viper.SetDefault("websocket.path", "/ws")
+	viper.SetDefault("websocket.authService", "pass")
+	viper.SetDefault("websocket.authUseTLS", false)
+	viper.SetDefault("websocket.authTlsSkipVerify", false)
+	viper.SetDefault("websocket.authTlsServerName", "")
+	viper.SetDefault("websocket.keepAliveSeconds", 60)
+	viper.SetDefault("websocket.maxMessageBytes", 4096)
+	viper.SetDefault("websocket.allowedDeviceAlternatives", []string{"watch"})
 
-	viper.SetDefault("specialRoutes.routes", []RouteRule{
+	viper.SetDefault("routes", []RouteRule{
 		{Path: "/.well-known/openid-configuration", Service: "pass", Target: "/auth/.well-known/openid-configuration", Prefix: false},
 		{Path: "/.well-known/jwks", Service: "pass", Target: "/auth/.well-known/jwks", Prefix: false},
 		{Path: "/.well-known/webfinger", Service: "sphere", Target: "/fediverse/.well-known/webfinger", Prefix: false},
@@ -125,6 +122,7 @@ func Load(configPath string) (*Config, error) {
 	if err := viper.ReadInConfig(); err != nil {
 		return nil, fmt.Errorf("failed to read config: %w", err)
 	}
+	applyLegacyAliases()
 
 	var cfg Config
 	if err := viper.Unmarshal(&cfg); err != nil {
@@ -134,6 +132,58 @@ func Load(configPath string) (*Config, error) {
 	cfg.Health.CheckTimeout = 5 * time.Second
 
 	return &cfg, nil
+}
+
+func applyLegacyAliases() {
+	if !hasNewGRPCConfig() && hasLegacyGRPCConfig() {
+		viper.Set("grpc", viper.Get("grpcServer"))
+	}
+	if !hasNewWebSocketConfig() && hasLegacyWebSocketConfig() {
+		viper.Set("websocket", viper.Get("websocketGateway"))
+	}
+	if !hasNewRoutesConfig() && hasLegacyRoutesConfig() {
+		viper.Set("routes", viper.Get("specialRoutes.routes"))
+	}
+}
+
+func hasNewGRPCConfig() bool {
+	return viper.InConfig("grpc.enabled") || viper.InConfig("grpc.port")
+}
+
+func hasLegacyGRPCConfig() bool {
+	return viper.InConfig("grpcServer.enabled") || viper.InConfig("grpcServer.port")
+}
+
+func hasNewWebSocketConfig() bool {
+	return viper.InConfig("websocket.enabled") ||
+		viper.InConfig("websocket.path") ||
+		viper.InConfig("websocket.authService") ||
+		viper.InConfig("websocket.authUseTLS") ||
+		viper.InConfig("websocket.authTlsSkipVerify") ||
+		viper.InConfig("websocket.authTlsServerName") ||
+		viper.InConfig("websocket.keepAliveSeconds") ||
+		viper.InConfig("websocket.maxMessageBytes") ||
+		viper.InConfig("websocket.allowedDeviceAlternatives")
+}
+
+func hasLegacyWebSocketConfig() bool {
+	return viper.InConfig("websocketGateway.enabled") ||
+		viper.InConfig("websocketGateway.path") ||
+		viper.InConfig("websocketGateway.authService") ||
+		viper.InConfig("websocketGateway.authUseTLS") ||
+		viper.InConfig("websocketGateway.authTlsSkipVerify") ||
+		viper.InConfig("websocketGateway.authTlsServerName") ||
+		viper.InConfig("websocketGateway.keepAliveSeconds") ||
+		viper.InConfig("websocketGateway.maxMessageBytes") ||
+		viper.InConfig("websocketGateway.allowedDeviceAlternatives")
+}
+
+func hasNewRoutesConfig() bool {
+	return viper.InConfig("routes")
+}
+
+func hasLegacyRoutesConfig() bool {
+	return viper.InConfig("specialRoutes.routes")
 }
 
 func GetServiceHttp(serviceName string) string {

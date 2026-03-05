@@ -13,8 +13,8 @@ import (
 )
 
 type Proxy struct {
-	serviceURLs   map[string]string
-	specialRoutes config.SpecialRoutesConfig
+	serviceURLs map[string]string
+	routes      []config.RouteRule
 }
 
 func New(cfg *config.Config) *Proxy {
@@ -27,8 +27,8 @@ func New(cfg *config.Config) *Proxy {
 	}
 
 	return &Proxy{
-		serviceURLs:   serviceURLs,
-		specialRoutes: cfg.SpecialRoutes,
+		serviceURLs: serviceURLs,
+		routes:      cfg.Routes,
 	}
 }
 
@@ -37,7 +37,7 @@ func (p *Proxy) Handler() gin.HandlerFunc {
 		path := c.Request.URL.Path
 
 		// Check special routes
-		for _, route := range p.specialRoutes.Routes {
+		for _, route := range p.routes {
 			matched := false
 			if route.Prefix {
 				matched = strings.HasPrefix(path, route.Path)

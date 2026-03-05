@@ -38,9 +38,9 @@ func main() {
 
 	logging.Log.Info().
 		Str("configPath", configPath).
-		Int("specialRoutes", len(cfg.SpecialRoutes.Routes)).
+		Int("routes", len(cfg.Routes)).
 		Msg("Starting Blade Gateway")
-	for _, route := range cfg.SpecialRoutes.Routes {
+	for _, route := range cfg.Routes {
 		logging.Log.Info().
 			Str("path", route.Path).
 			Str("service", route.Service).
@@ -76,8 +76,8 @@ func main() {
 
 	r.Use(health.ReadinessMiddleware(store))
 
-	if cfg.WebSocketGateway.Enabled {
-		authService := cfg.WebSocketGateway.AuthService
+	if cfg.WebSocket.Enabled {
+		authService := cfg.WebSocket.AuthService
 		authGrpcTarget := config.GetServiceGrpc(authService)
 		if authGrpcTarget == "" {
 			logging.Log.Fatal().
@@ -87,9 +87,9 @@ func main() {
 
 		authenticator, err := wsgateway.NewGrpcTokenAuthenticator(wsgateway.GrpcAuthDialConfig{
 			Target:        authGrpcTarget,
-			UseTLS:        cfg.WebSocketGateway.AuthUseTLS,
-			TLSSkipVerify: cfg.WebSocketGateway.AuthTLSSkipVerify,
-			TLSServerName: cfg.WebSocketGateway.AuthTLSServerName,
+			UseTLS:        cfg.WebSocket.AuthUseTLS,
+			TLSSkipVerify: cfg.WebSocket.AuthTLSSkipVerify,
+			TLSServerName: cfg.WebSocket.AuthTLSServerName,
 		})
 		if err != nil {
 			logging.Log.Fatal().
@@ -100,11 +100,11 @@ func main() {
 		}
 
 		wsCfg := wsgateway.Config{
-			KeepAliveInterval: time.Duration(cfg.WebSocketGateway.KeepAliveSeconds) * time.Second,
-			MaxMessageBytes:   cfg.WebSocketGateway.MaxMessageBytes,
-			AllowedDeviceAlt:  make(map[string]struct{}, len(cfg.WebSocketGateway.AllowedDeviceAltern)),
+			KeepAliveInterval: time.Duration(cfg.WebSocket.KeepAliveSeconds) * time.Second,
+			MaxMessageBytes:   cfg.WebSocket.MaxMessageBytes,
+			AllowedDeviceAlt:  make(map[string]struct{}, len(cfg.WebSocket.AllowedDeviceAltern)),
 		}
-		for _, alt := range cfg.WebSocketGateway.AllowedDeviceAltern {
+		for _, alt := range cfg.WebSocket.AllowedDeviceAltern {
 			wsCfg.AllowedDeviceAlt[alt] = struct{}{}
 		}
 
@@ -128,7 +128,7 @@ func main() {
 
 		wsService = wsgateway.NewService(wsCfg, nil, forwarder, nil)
 		wsHandler := wsgateway.NewHttpHandler(authenticator, wsService, wsCfg)
-		r.GET(cfg.WebSocketGateway.Path, wsHandler.Handle)
+		r.GET(cfg.WebSocket.Path, wsHandler.Handle)
 
 		if isDebugMode {
 			debugWs := r.Group("/debug/ws")
@@ -137,7 +137,7 @@ func main() {
 				devices := wsService.GetAllConnectedDeviceIDs()
 				c.JSON(http.StatusOK, gin.H{
 					"enabled":         true,
-					"path":            cfg.WebSocketGateway.Path,
+					"path":            cfg.WebSocket.Path,
 					"connectionCount": len(wsService.GetConnectionSnapshots()),
 					"userCount":       len(users),
 					"deviceCount":     len(devices),
@@ -177,13 +177,13 @@ func main() {
 		}
 
 		logging.Log.Info().
-			Str("path", cfg.WebSocketGateway.Path).
+			Str("path", cfg.WebSocket.Path).
 			Str("authService", authService).
 			Str("authGrpcTarget", authGrpcTarget).
-			Bool("authUseTLS", cfg.WebSocketGateway.AuthUseTLS).
-			Bool("authTLSSkipVerify", cfg.WebSocketGateway.AuthTLSSkipVerify).
-			Str("authTLSServerName", cfg.WebSocketGateway.AuthTLSServerName).
-			Int64("maxMessageBytes", cfg.WebSocketGateway.MaxMessageBytes).
+			Bool("authUseTLS", cfg.WebSocket.AuthUseTLS).
+			Bool("authTLSSkipVerify", cfg.WebSocket.AuthTLSSkipVerify).
+			Str("authTLSServerName", cfg.WebSocket.AuthTLSServerName).
+			Int64("maxMessageBytes", cfg.WebSocket.MaxMessageBytes).
 			Msg("Registered websocket gateway route")
 	}
 
@@ -233,11 +233,11 @@ func main() {
 	}()
 
 	var grpcSrv *grpc.Server
-	if cfg.GrpcServer.Enabled && wsService != nil {
-		grpcAddr := ":" + cfg.GrpcServer.Port
+	if cfg.GRPC.Enabled && wsService != nil {
+		grpcAddr := ":" + cfg.GRPC.Port
 		lis, err := net.Listen("tcp", grpcAddr)
 		if err != nil {
-			logging.Log.Fatal().Err(err).Str("port", cfg.GrpcServer.Port).Msg("Failed to listen gRPC server")
+			logging.Log.Fatal().Err(err).Str("port", cfg.GRPC.Port).Msg("Failed to listen gRPC server")
 		}
 
 		grpcSrv = grpc.NewServer()
@@ -245,7 +245,7 @@ func main() {
 		reflection.Register(grpcSrv)
 
 		go func() {
-			logging.Log.Info().Str("port", cfg.GrpcServer.Port).Msg("Starting gRPC server")
+			logging.Log.Info().Str("port", cfg.GRPC.Port).Msg("Starting gRPC server")
 			if err := grpcSrv.Serve(lis); err != nil {
 				logging.Log.Fatal().Err(err).Msg("Failed to start gRPC server")
 			}

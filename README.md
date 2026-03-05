@@ -12,7 +12,7 @@ Because Solar Network is built by pure Go at the v2, and migrated to .NET at v3,
 - **Readiness Gating** - Returns 503 if core services are unhealthy
 - **Rate Limiting** - 120 requests/minute per IP with burst allowance
 - **CORS Support** - Allows all origins with custom headers
-- **Special Routes** - Fully configurable route system via `specialRoutes.routes`
+- **Special Routes** - Fully configurable route system via `routes`
 - **Route Transforms** - Strips service prefix, adds `/api` prefix
 
 ## Configuration
@@ -53,37 +53,12 @@ port = "6000"
 readTimeout = 60
 writeTimeout = 60
 
-[websocketGateway]
+[websocket]
 enabled = true
 path = "/ws"
 keepAliveSeconds = 60
 maxMessageBytes = 4096
 allowedDeviceAlternatives = ["watch"]
-
-[specialRoutes]
-
-[specialRoutes.websocket]
-service = "ring"
-
-[specialRoutes.activityPub]
-service = "sphere"
-path = "/activitypub"
-
-[[specialRoutes.wellKnown]]
-path = "/.well-known/openid-configuration"
-service = "pass"
-
-[[specialRoutes.wellKnown]]
-path = "/.well-known/jwks"
-service = "pass"
-
-[[specialRoutes.wellKnown]]
-path = "/.well-known/webfinger"
-service = "sphere"
-
-[[specialRoutes.swagger]]
-path = "swagger"
-service = "ring"
 ```
 
 ### Environment Variables
@@ -99,13 +74,13 @@ service = "ring"
 The gateway supports fully configurable special routes:
 
 ```toml
-[[specialRoutes.routes]]
+[[routes]]
 path = "/.well-known/openid-configuration"
 service = "pass"
 target = "/auth/.well-known/openid-configuration"
 prefix = false
 
-[[specialRoutes.routes]]
+[[routes]]
 path = "/activitypub"
 service = "sphere"
 target = "/activitypub"
@@ -153,9 +128,9 @@ docker run -p 6000:6000 -v ./config.toml:/app/configs/config.toml dyson-gateway
 | ----------------------- | ------------------------------------------------------------------ |
 | `GET /health`           | Gateway health status                                              |
 | `/<service>/**`         | Proxied to backend service (e.g., `/ring/**` → `ring:5000/api/**`) |
-| `/ws`                   | Native WebSocket gateway (configurable via `websocketGateway.path`) |
-| `/.well-known/*`        | .well-known endpoints (configurable via `specialRoutes.routes`)    |
-| `/activitypub/**`       | ActivityPub (configurable via `specialRoutes.routes`)              |
+| `/ws`                   | Native WebSocket gateway (configurable via `websocket.path`) |
+| `/.well-known/*`        | .well-known endpoints (configurable via `routes`)    |
+| `/activitypub/**`       | ActivityPub (configurable via `routes`)              |
 | `/swagger/<service>/**` | Swagger docs → service                                             |
 
 ### WebSocket Authentication Notes
@@ -163,7 +138,7 @@ docker run -p 6000:6000 -v ./config.toml:/app/configs/config.toml dyson-gateway
 Current implementation follows `DysonTokenAuthHandler` behavior:
 
 - Token extraction order: `tk` query, `Authorization` header (`Bearer`, `AtField`, `AkField`), `AuthToken` cookie
-- Token validation: remote gRPC call to `DyAuthService/Authenticate` using the configured `websocketGateway.authService` target
+- Token validation: remote gRPC call to `DyAuthService/Authenticate` using the configured `websocket.authService` target
 - Request IP is forwarded to auth service as `ip_address`
 
 ## Request Flow

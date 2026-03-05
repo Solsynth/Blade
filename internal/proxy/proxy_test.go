@@ -67,10 +67,8 @@ func TestSpecialRouteWS_ProxiesToConfiguredTarget(t *testing.T) {
 		serviceURLs: map[string]string{
 			"ring": upstream.URL,
 		},
-		specialRoutes: config.SpecialRoutesConfig{
-			Routes: []config.RouteRule{
-				{Path: "/ws", Service: "ring", Target: "/api/ws", Prefix: false},
-			},
+		routes: []config.RouteRule{
+			{Path: "/ws", Service: "ring", Target: "/api/ws", Prefix: false},
 		},
 	}
 

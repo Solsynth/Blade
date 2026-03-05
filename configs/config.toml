@@ -45,11 +45,11 @@ port = "6000"
 readTimeout = 60
 writeTimeout = 60
 
-[grpcServer]
+[grpc]
 enabled = true
 port = "7001"
 
-[websocketGateway]
+[websocket]
 enabled = true
 path = "/ws"
 authService = "pass"
@@ -59,31 +59,31 @@ keepAliveSeconds = 60
 maxMessageBytes = 4096
 allowedDeviceAlternatives = ["watch"]
 
-[[specialRoutes.routes]]
+[[routes]]
 path = "/.well-known/openid-configuration"
 service = "pass"
 target = "/auth/.well-known/openid-configuration"
 prefix = false
 
-[[specialRoutes.routes]]
+[[routes]]
 path = "/.well-known/jwks"
 service = "pass"
 target = "/auth/.well-known/jwks"
 prefix = false
 
-[[specialRoutes.routes]]
+[[routes]]
 path = "/.well-known/webfinger"
 service = "sphere"
 target = "/fediverse/.well-known/webfinger"
 prefix = false
 
-[[specialRoutes.routes]]
+[[routes]]
 path = "/activitypub"
 service = "sphere"
 target = "/activitypub"
 prefix = true
 
-[[specialRoutes.routes]]
+[[routes]]
 path = "/api/activitypub"
 service = "sphere"
 target = "/activitypub"
