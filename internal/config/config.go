@@ -11,8 +11,7 @@ type Config struct {
 	Endpoints EndpointsConfig  `mapstructure:"endpoints"`
 	Services  ServicesConfig   `mapstructure:"services"`
 	Cache     CacheConfig      `mapstructure:"cache"`
-	NATS      NATSConfig       `mapstructure:"nats"`
-	RateLimit RateLimitConfig  `mapstructure:"rateLimit"`
+	NATS      NatsConfig       `mapstructure:"nats"`
 	Health    HealthConfig     `mapstructure:"health"`
 	Server    ServerConfig     `mapstructure:"server"`
 	GRPC      GrpcServerConfig `mapstructure:"grpc"`
@@ -37,14 +36,9 @@ type CacheConfig struct {
 	Serializer string `mapstructure:"serializer"`
 }
 
-type NATSConfig struct {
+type NatsConfig struct {
 	URL                    string `mapstructure:"url"`
 	WebSocketSubjectPrefix string `mapstructure:"websocketSubjectPrefix"`
-}
-
-type RateLimitConfig struct {
-	RequestsPerMinute int `mapstructure:"requestsPerMinute"`
-	BurstAllowance    int `mapstructure:"burstAllowance"`
 }
 
 type HealthConfig struct {
@@ -91,8 +85,6 @@ func Load(configPath string) (*Config, error) {
 	viper.SetDefault("endpoints.coreServiceNames", []string{"ring", "pass", "drive", "sphere"})
 	viper.SetDefault("nats.url", "")
 	viper.SetDefault("nats.websocketSubjectPrefix", "websocket_")
-	viper.SetDefault("rateLimit.requestsPerMinute", 120)
-	viper.SetDefault("rateLimit.burstAllowance", 10)
 	viper.SetDefault("health.checkIntervalSeconds", 10)
 	viper.SetDefault("server.port", "6000")
 	viper.SetDefault("server.readTimeout", 60*time.Second)

@@ -1,10 +1,10 @@
-siteUrl = "https://solian.app"
+siteUrl = "http://localhost:5173"
 
 [cache]
 serializer = "JSON"
 
 [nats]
-url = "nats://nats:RE0zx7Qtady3Akyrn6eZXF@localhost:63769"
+url = "nats://nats:RE0zx7Qtady3Akyrn6eZXF@localhost:62656"
 websocketSubjectPrefix = "websocket_"
 
 [services]
@@ -17,6 +17,7 @@ insight = { http = "http://localhost:8006", grpc = "localhost:7007" }
 zone = { http = "http://localhost:8007", grpc = "localhost:7008" }
 messager = { http = "http://localhost:8008", grpc = "localhost:7009" }
 wallet = { http = "http://localhost:8009", grpc = "localhost:7010" }
+padlock = { http = "http://localhost:8010", grpc = "localhost:7011" }
 
 [endpoints]
 serviceNames = [
@@ -29,16 +30,16 @@ serviceNames = [
     "zone",
     "messager",
     "wallet",
-    "ideask",
+    "padlock",
 ]
-coreServiceNames = ["ring", "pass", "drive", "sphere"]
+coreServiceNames = ["padlock", "pass", "drive", "sphere"]
 
 [rateLimit]
 requestsPerMinute = 120
 burstAllowance = 10
 
 [health]
-checkIntervalSeconds = 10
+checkIntervalSeconds = 1000
 
 [server]
 port = "6000"
@@ -52,7 +53,7 @@ port = "7001"
 [websocket]
 enabled = true
 path = "/ws"
-authService = "pass"
+authService = "padlock"
 authUseTLS = true
 authTlsSkipVerify = true
 keepAliveSeconds = 60

@@ -6,17 +6,18 @@ import (
 	"time"
 
 	"git.solsynth.dev/sosys/blade/internal/logging"
+	dyauth "git.solsynth.dev/sosys/blade/pkg/auth"
 	"github.com/gin-gonic/gin"
 	"golang.org/x/net/websocket"
 )
 
 type HttpHandler struct {
-	authenticator TokenAuthenticator
+	authenticator dyauth.TokenAuthenticator
 	service       *Service
 	cfg           Config
 }
 
-func NewHttpHandler(authenticator TokenAuthenticator, service *Service, cfg Config) *HttpHandler {
+func NewHttpHandler(authenticator dyauth.TokenAuthenticator, service *Service, cfg Config) *HttpHandler {
 	if cfg.KeepAliveInterval <= 0 {
 		cfg.KeepAliveInterval = 60 * time.Second
 	}
@@ -46,7 +47,7 @@ func (h *HttpHandler) Handle(c *gin.Context) {
 		}
 	}
 
-	auth, err := authenticateRequest(c.Request.Context(), h.authenticator, c.Request)
+	auth, err := dyauth.AuthenticateRequest(c.Request.Context(), h.authenticator, c.Request)
 	if err != nil {
 		logging.Log.Warn().
 			Err(err).

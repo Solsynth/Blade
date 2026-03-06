@@ -14,6 +14,7 @@ import (
 	"git.solsynth.dev/sosys/blade/internal/logging"
 	"git.solsynth.dev/sosys/blade/internal/proxy"
 	"git.solsynth.dev/sosys/blade/internal/wsgateway"
+	dyauth "git.solsynth.dev/sosys/blade/pkg/auth"
 	gen "git.solsynth.dev/sosys/spec/gen/go"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -85,7 +86,7 @@ func main() {
 				Msg("WebSocket gateway enabled but auth service gRPC target is missing")
 		}
 
-		authenticator, err := wsgateway.NewGrpcTokenAuthenticator(wsgateway.GrpcAuthDialConfig{
+		authenticator, err := dyauth.NewGrpcTokenAuthenticator(dyauth.GrpcAuthDialConfig{
 			Target:        authGrpcTarget,
 			UseTLS:        cfg.WebSocket.AuthUseTLS,
 			TLSSkipVerify: cfg.WebSocket.AuthTLSSkipVerify,
@@ -188,6 +189,10 @@ func main() {
 	}
 
 	r.NoRoute(proxyHandler.Handler())
+
+	r.GET("/config/site", func(c *gin.Context) {
+		c.String(http.StatusOK, cfg.SiteURL)
+	})
 
 	r.GET("/health", func(c *gin.Context) {
 		states := store.GetAllStates()

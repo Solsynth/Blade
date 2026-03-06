@@ -1,4 +1,4 @@
-package wsgateway
+package auth
 
 import (
 	"context"
@@ -26,9 +26,10 @@ type AuthResult struct {
 type TokenType string
 
 const (
-	TokenTypeAuthKey TokenType = "AuthKey"
-	TokenTypeOidcKey TokenType = "OidcKey"
-	TokenTypeAPIKey  TokenType = "ApiKey"
+	TokenTypeUserJWT         TokenType = "UserJWT"
+	TokenTypeAPIKeyJWT       TokenType = "ApiKeyJWT"
+	TokenTypeLegacyUserToken TokenType = "LegacyUserToken"
+	TokenTypeLegacyAPIKey    TokenType = "LegacyApiKey"
 )
 
 type TokenInfo struct {
@@ -52,7 +53,7 @@ type GrpcAuthDialConfig struct {
 }
 
 func NewGrpcTokenAuthenticator(cfg GrpcAuthDialConfig) (*GrpcTokenAuthenticator, error) {
-	target, useTLS := normalizeAuthGRPCTarget(cfg.Target, cfg.UseTLS)
+	target, useTLS := NormalizeAuthGRPCTarget(cfg.Target, cfg.UseTLS)
 	if target == "" {
 		return nil, errors.New("auth gRPC target is empty")
 	}
@@ -81,7 +82,7 @@ func NewGrpcTokenAuthenticator(cfg GrpcAuthDialConfig) (*GrpcTokenAuthenticator,
 	return &GrpcTokenAuthenticator{conn: conn}, nil
 }
 
-func normalizeAuthGRPCTarget(rawTarget string, useTLS bool) (string, bool) {
+func NormalizeAuthGRPCTarget(rawTarget string, useTLS bool) (string, bool) {
 	target := strings.TrimSpace(rawTarget)
 	if target == "" {
 		return "", useTLS
@@ -106,7 +107,7 @@ func normalizeAuthGRPCTarget(rawTarget string, useTLS bool) (string, bool) {
 }
 
 func (a *GrpcTokenAuthenticator) Authenticate(ctx context.Context, tokenInfo TokenInfo, r *http.Request) (*AuthResult, error) {
-	ip := extractIP(r)
+	ip := ExtractIP(r)
 	req := &gen.DyAuthenticateRequest{Token: tokenInfo.Token}
 	if ip != "" {
 		req.IpAddress = wrapperspb.String(ip)
@@ -129,41 +130,69 @@ func (a *GrpcTokenAuthenticator) Authenticate(ctx context.Context, tokenInfo Tok
 	}
 }
 
-func extractToken(r *http.Request) (TokenInfo, bool) {
+func ExtractToken(r *http.Request) (TokenInfo, bool) {
 	if tk := strings.TrimSpace(r.URL.Query().Get("tk")); tk != "" {
-		return TokenInfo{Token: tk, Type: TokenTypeAuthKey}, true
+		if looksLikeJWT(tk) {
+			return TokenInfo{Token: tk, Type: TokenTypeUserJWT}, true
+		}
+		return TokenInfo{Token: tk, Type: TokenTypeLegacyUserToken}, true
 	}
 
 	authz := strings.TrimSpace(r.Header.Get("Authorization"))
 	if authz != "" {
-		if strings.HasPrefix(strings.ToLower(authz), "bearer ") {
-			token := strings.TrimSpace(authz[len("Bearer "):])
-			if strings.Count(token, ".") == 2 {
-				return TokenInfo{Token: token, Type: TokenTypeOidcKey}, true
+		scheme, token, ok := splitAuthorizationHeader(authz)
+		if ok {
+			switch strings.ToLower(scheme) {
+			case "bearer":
+				typeName := TokenTypeUserJWT
+				if !looksLikeJWT(token) {
+					typeName = TokenTypeLegacyUserToken
+				}
+				return TokenInfo{Token: token, Type: typeName}, true
+			case "bot":
+				typeName := TokenTypeAPIKeyJWT
+				if !looksLikeJWT(token) {
+					typeName = TokenTypeLegacyAPIKey
+				}
+				return TokenInfo{Token: token, Type: typeName}, true
+			case "atfield":
+				return TokenInfo{Token: token, Type: TokenTypeLegacyUserToken}, true
+			case "akfield":
+				return TokenInfo{Token: token, Type: TokenTypeLegacyAPIKey}, true
 			}
-			return TokenInfo{Token: token, Type: TokenTypeAuthKey}, true
-		}
-		if strings.HasPrefix(strings.ToLower(authz), "atfield ") {
-			return TokenInfo{Token: strings.TrimSpace(authz[len("AtField "):]), Type: TokenTypeAuthKey}, true
-		}
-		if strings.HasPrefix(strings.ToLower(authz), "akfield ") {
-			return TokenInfo{Token: strings.TrimSpace(authz[len("AkField "):]), Type: TokenTypeAPIKey}, true
 		}
 	}
 
 	if cookie, err := r.Cookie("AuthToken"); err == nil {
 		tk := strings.TrimSpace(cookie.Value)
-		tt := TokenTypeAuthKey
-		if strings.Count(tk, ".") == 2 {
-			tt = TokenTypeOidcKey
+		if tk != "" {
+			tt := TokenTypeLegacyUserToken
+			if looksLikeJWT(tk) {
+				tt = TokenTypeUserJWT
+			}
+			return TokenInfo{Token: tk, Type: tt}, true
 		}
-		return TokenInfo{Token: tk, Type: tt}, true
 	}
 
 	return TokenInfo{}, false
 }
 
-func extractIP(r *http.Request) string {
+func AuthenticateRequest(ctx context.Context, auth TokenAuthenticator, r *http.Request) (*AuthResult, error) {
+	if auth == nil {
+		return nil, errors.New("token authenticator is not configured")
+	}
+	tokenInfo, ok := ExtractToken(r)
+	if !ok || strings.TrimSpace(tokenInfo.Token) == "" {
+		return nil, errors.New("no token was provided")
+	}
+
+	authCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+
+	return auth.Authenticate(authCtx, tokenInfo, r)
+}
+
+func ExtractIP(r *http.Request) string {
 	if xff := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); xff != "" {
 		parts := strings.Split(xff, ",")
 		if len(parts) > 0 {
@@ -179,14 +208,14 @@ func extractIP(r *http.Request) string {
 	return strings.TrimSpace(r.RemoteAddr)
 }
 
-func authenticateRequest(ctx context.Context, auth TokenAuthenticator, r *http.Request) (*AuthResult, error) {
-	tokenInfo, ok := extractToken(r)
-	if !ok || strings.TrimSpace(tokenInfo.Token) == "" {
-		return nil, errors.New("no token was provided")
+func splitAuthorizationHeader(value string) (scheme string, token string, ok bool) {
+	parts := strings.Fields(strings.TrimSpace(value))
+	if len(parts) < 2 {
+		return "", "", false
 	}
+	return parts[0], strings.TrimSpace(strings.Join(parts[1:], " ")), true
+}
 
-	authCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
-	defer cancel()
-
-	return auth.Authenticate(authCtx, tokenInfo, r)
+func looksLikeJWT(token string) bool {
+	return strings.Count(token, ".") == 2
 }
