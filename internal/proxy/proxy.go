@@ -15,6 +15,8 @@ import (
 type Proxy struct {
 	serviceURLs map[string]string
 	routes      []config.RouteRule
+	maintenance config.MaintenanceConfig
+	blockedSet  map[string]struct{}
 }
 
 func New(cfg *config.Config) *Proxy {
@@ -29,12 +31,19 @@ func New(cfg *config.Config) *Proxy {
 	return &Proxy{
 		serviceURLs: serviceURLs,
 		routes:      cfg.Routes,
+		maintenance: cfg.Maintenance,
+		blockedSet:  toServiceSet(cfg.Maintenance.Services),
 	}
 }
 
 func (p *Proxy) Handler() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		path := c.Request.URL.Path
+
+		if p.isFullMaintenance() {
+			p.respondMaintenanceBlocked(c, "")
+			return
+		}
 
 		// Check special routes
 		for _, route := range p.routes {
@@ -46,6 +55,10 @@ func (p *Proxy) Handler() gin.HandlerFunc {
 			}
 
 			if matched {
+				if p.isServiceBlocked(route.Service) {
+					p.respondMaintenanceBlocked(c, route.Service)
+					return
+				}
 				p.handleSpecialRoute(c, route)
 				return
 			}
@@ -57,6 +70,10 @@ func (p *Proxy) Handler() gin.HandlerFunc {
 			if len(parts) >= 2 {
 				serviceName := parts[1]
 				if _, ok := p.serviceURLs[serviceName]; ok {
+					if p.isServiceBlocked(serviceName) {
+						p.respondMaintenanceBlocked(c, serviceName)
+						return
+					}
 					newPath := "/swagger/" + strings.Join(parts[2:], "/")
 					p.handleProxyWithPath(c, serviceName, newPath)
 					return
@@ -69,6 +86,10 @@ func (p *Proxy) Handler() gin.HandlerFunc {
 		if len(parts) > 0 {
 			serviceName := parts[0]
 			if _, ok := p.serviceURLs[serviceName]; ok {
+				if p.isServiceBlocked(serviceName) {
+					p.respondMaintenanceBlocked(c, serviceName)
+					return
+				}
 				var newPath string
 				if len(parts) > 1 {
 					newPath = "/api/" + parts[1]
@@ -85,6 +106,55 @@ func (p *Proxy) Handler() gin.HandlerFunc {
 			"code":  "ROUTE_NOT_FOUND",
 		})
 	}
+}
+
+func toServiceSet(services []string) map[string]struct{} {
+	serviceSet := make(map[string]struct{}, len(services))
+	for _, svc := range services {
+		if svc == "" {
+			continue
+		}
+		serviceSet[strings.ToLower(svc)] = struct{}{}
+	}
+	return serviceSet
+}
+
+func (p *Proxy) isFullMaintenance() bool {
+	if !p.maintenance.Enabled {
+		return false
+	}
+	return strings.EqualFold(p.maintenance.Mode, "full")
+}
+
+func (p *Proxy) isServiceBlocked(serviceName string) bool {
+	if !p.maintenance.Enabled {
+		return false
+	}
+	if p.isFullMaintenance() {
+		return true
+	}
+	if !strings.EqualFold(p.maintenance.Mode, "service") {
+		return false
+	}
+	_, blocked := p.blockedSet[strings.ToLower(serviceName)]
+	return blocked
+}
+
+func (p *Proxy) respondMaintenanceBlocked(c *gin.Context, serviceName string) {
+	logEvent := logging.Log.Warn().Str("path", c.Request.URL.Path).Str("mode", p.maintenance.Mode)
+	if serviceName != "" {
+		logEvent = logEvent.Str("service", serviceName)
+	}
+	logEvent.Msg("Request blocked by maintenance mode")
+
+	resp := gin.H{
+		"error": "service under maintenance",
+		"code":  "MAINTENANCE_MODE",
+	}
+	if serviceName != "" {
+		resp["service"] = serviceName
+	}
+	c.JSON(http.StatusServiceUnavailable, resp)
 }
 
 func (p *Proxy) handleSpecialRoute(c *gin.Context, route config.RouteRule) {

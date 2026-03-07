@@ -4,12 +4,12 @@ siteUrl = "http://localhost:5173"
 serializer = "JSON"
 
 [nats]
-url = "nats://nats:RE0zx7Qtady3Akyrn6eZXF@localhost:62656"
+url = "nats://nats:RE0zx7Qtady3Akyrn6eZXF@localhost:55749"
 websocketSubjectPrefix = "websocket_"
 
 [services]
 ring = { http = "http://localhost:8001", grpc = "localhost:7002" }
-pass = { http = "http://localhost:8002", grpc = "localhost:7003" }
+passport = { http = "http://localhost:8002", grpc = "localhost:7003" }
 drive = { http = "http://localhost:8003", grpc = "localhost:7004" }
 sphere = { http = "http://localhost:8004", grpc = "localhost:7005" }
 develop = { http = "http://localhost:8005", grpc = "localhost:7006" }
@@ -21,18 +21,18 @@ padlock = { http = "http://localhost:8010", grpc = "localhost:7011" }
 
 [endpoints]
 serviceNames = [
-    "ring",
-    "pass",
-    "drive",
-    "sphere",
-    "develop",
-    "insight",
-    "zone",
-    "messager",
-    "wallet",
-    "padlock",
+  "ring",
+  "passport",
+  "drive",
+  "sphere",
+  "develop",
+  "insight",
+  "zone",
+  "messager",
+  "wallet",
+  "padlock",
 ]
-coreServiceNames = ["padlock", "pass", "drive", "sphere"]
+coreServiceNames = ["padlock", "passport", "drive", "sphere"]
 
 [rateLimit]
 requestsPerMinute = 120
@@ -59,6 +59,11 @@ authTlsSkipVerify = true
 keepAliveSeconds = 60
 maxMessageBytes = 4096
 allowedDeviceAlternatives = ["watch"]
+
+[maintenance]
+enabled = false
+mode = "full" # "full" blocks all proxied requests, "service" blocks only services listed below
+services = [] # only used when mode = "service"
 
 [[routes]]
 path = "/.well-known/openid-configuration"

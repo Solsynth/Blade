@@ -13,6 +13,7 @@ Because Solar Network is built by pure Go at the v2, and migrated to .NET at v3,
 - **CORS Support** - Allows all origins with custom headers
 - **Special Routes** - Fully configurable route system via `routes`
 - **Route Transforms** - Strips service prefix, adds `/api` prefix
+- **Maintenance Mode** - Returns 503 globally or per configured services
 
 ## Configuration
 
@@ -58,7 +59,29 @@ path = "/ws"
 keepAliveSeconds = 60
 maxMessageBytes = 4096
 allowedDeviceAlternatives = ["watch"]
+
+[maintenance]
+enabled = false
+mode = "full" # "full" or "service"
+services = [] # used when mode = "service"
 ```
+
+### Maintenance Mode
+
+```toml
+[maintenance]
+enabled = true
+mode = "full" # blocks all proxied requests with 503
+```
+
+```toml
+[maintenance]
+enabled = true
+mode = "service" # blocks only listed services
+services = ["sphere", "drive"]
+```
+
+Legacy key `maintaince` is also supported for backward compatibility.
 
 ### Environment Variables
 

@@ -8,16 +8,17 @@ import (
 )
 
 type Config struct {
-	Endpoints EndpointsConfig  `mapstructure:"endpoints"`
-	Services  ServicesConfig   `mapstructure:"services"`
-	Cache     CacheConfig      `mapstructure:"cache"`
-	NATS      NatsConfig       `mapstructure:"nats"`
-	Health    HealthConfig     `mapstructure:"health"`
-	Server    ServerConfig     `mapstructure:"server"`
-	GRPC      GrpcServerConfig `mapstructure:"grpc"`
-	WebSocket WebSocketConfig  `mapstructure:"websocket"`
-	Routes    []RouteRule      `mapstructure:"routes"`
-	SiteURL   string           `mapstructure:"siteUrl"`
+	Endpoints   EndpointsConfig   `mapstructure:"endpoints"`
+	Services    ServicesConfig    `mapstructure:"services"`
+	Cache       CacheConfig       `mapstructure:"cache"`
+	NATS        NatsConfig        `mapstructure:"nats"`
+	Health      HealthConfig      `mapstructure:"health"`
+	Server      ServerConfig      `mapstructure:"server"`
+	GRPC        GrpcServerConfig  `mapstructure:"grpc"`
+	WebSocket   WebSocketConfig   `mapstructure:"websocket"`
+	Routes      []RouteRule       `mapstructure:"routes"`
+	Maintenance MaintenanceConfig `mapstructure:"maintenance"`
+	SiteURL     string            `mapstructure:"siteUrl"`
 }
 
 type EndpointsConfig struct {
@@ -76,6 +77,12 @@ type RouteRule struct {
 	Prefix  bool   `mapstructure:"prefix"`  // if true, match path prefix (e.g., "/activitypub/**")
 }
 
+type MaintenanceConfig struct {
+	Enabled  bool     `mapstructure:"enabled"`
+	Mode     string   `mapstructure:"mode"`
+	Services []string `mapstructure:"services"`
+}
+
 func Load(configPath string) (*Config, error) {
 	viper.Reset()
 	viper.SetConfigType("toml")
@@ -102,6 +109,9 @@ func Load(configPath string) (*Config, error) {
 	viper.SetDefault("websocket.keepAliveSeconds", 60)
 	viper.SetDefault("websocket.maxMessageBytes", 4096)
 	viper.SetDefault("websocket.allowedDeviceAlternatives", []string{"watch"})
+	viper.SetDefault("maintenance.enabled", false)
+	viper.SetDefault("maintenance.mode", "full")
+	viper.SetDefault("maintenance.services", []string{})
 
 	viper.SetDefault("routes", []RouteRule{
 		{Path: "/.well-known/openid-configuration", Service: "pass", Target: "/auth/.well-known/openid-configuration", Prefix: false},
@@ -135,6 +145,9 @@ func applyLegacyAliases() {
 	}
 	if !hasNewRoutesConfig() && hasLegacyRoutesConfig() {
 		viper.Set("routes", viper.Get("specialRoutes.routes"))
+	}
+	if !hasNewMaintenanceConfig() && hasLegacyMaintenanceConfig() {
+		viper.Set("maintenance", viper.Get("maintaince"))
 	}
 }
 
@@ -176,6 +189,18 @@ func hasNewRoutesConfig() bool {
 
 func hasLegacyRoutesConfig() bool {
 	return viper.InConfig("specialRoutes.routes")
+}
+
+func hasNewMaintenanceConfig() bool {
+	return viper.InConfig("maintenance.enabled") ||
+		viper.InConfig("maintenance.mode") ||
+		viper.InConfig("maintenance.services")
+}
+
+func hasLegacyMaintenanceConfig() bool {
+	return viper.InConfig("maintaince.enabled") ||
+		viper.InConfig("maintaince.mode") ||
+		viper.InConfig("maintaince.services")
 }
 
 func GetServiceHttp(serviceName string) string {
