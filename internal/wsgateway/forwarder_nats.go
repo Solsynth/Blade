@@ -50,7 +50,7 @@ func (f *NatsForwarder) Forward(_ context.Context, account *gen.DyAccount, devic
 		return fmt.Errorf("packet is required for endpoint forwarding")
 	}
 
-	normalizedEndpoint := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(endpoint), "DysonNetwork.", ""))
+	normalizedEndpoint := normalizeEndpoint(endpoint)
 	if normalizedEndpoint == "" {
 		return fmt.Errorf("endpoint is required for endpoint forwarding")
 	}
@@ -80,7 +80,18 @@ func (f *NatsForwarder) Forward(_ context.Context, account *gen.DyAccount, devic
 		return fmt.Errorf("publish to nats subject %s: %w", subject, err)
 	}
 
-	logging.Log.Debug().Str("subject", subject).Str("endpoint", endpoint).Str("account", account.Name).Msg("Forwarded websocket packet")
+	logging.Log.Debug().
+		Str("subject", subject).
+		Str("endpoint", endpoint).
+		Str("accountId", account.GetId()).
+		Str("deviceId", deviceID).
+		Msg("Forwarded websocket packet")
 
 	return nil
+}
+
+func normalizeEndpoint(endpoint string) string {
+	normalized := strings.ToLower(strings.TrimSpace(endpoint))
+	normalized = strings.TrimPrefix(normalized, "dysonnetwork.")
+	return normalized
 }

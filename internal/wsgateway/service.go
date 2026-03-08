@@ -381,11 +381,16 @@ func (s *Service) HandleConnection(ctx context.Context, account *gen.DyAccount, 
 
 func (s *Service) normalizeDeviceID(deviceID string) string {
 	trimmed := strings.TrimSpace(deviceID)
-	if trimmed != "" {
+	if trimmed != "" && !strings.HasPrefix(trimmed, "+") {
 		return trimmed
 	}
 
-	generated := uuid.NewString()
+	suffix := ""
+	if strings.HasPrefix(trimmed, "+") {
+		suffix = trimmed
+	}
+
+	generated := uuid.NewString() + suffix
 	logging.Log.Warn().Str("deviceId", generated).Msg("Missing websocket client_id; generated UUID fallback")
 	return generated
 }

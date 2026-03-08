@@ -24,3 +24,17 @@ func TestServiceNormalizeDeviceID_GeneratesUUIDWhenMissing(t *testing.T) {
 	}
 }
 
+func TestServiceNormalizeDeviceID_GeneratesUUIDWithDeviceAltSuffix(t *testing.T) {
+	svc := NewService(Config{}, nil, nil, nil)
+
+	got := svc.normalizeDeviceID("+watch")
+	const suffix = "+watch"
+	if len(got) <= len(suffix) || got[len(got)-len(suffix):] != suffix {
+		t.Fatalf("expected generated id to keep %q suffix, got %q", suffix, got)
+	}
+
+	base := got[:len(got)-len(suffix)]
+	if _, err := uuid.Parse(base); err != nil {
+		t.Fatalf("expected uuid base in generated id %q: %v", got, err)
+	}
+}
