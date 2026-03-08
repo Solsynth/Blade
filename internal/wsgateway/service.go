@@ -6,11 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
 	"git.solsynth.dev/sosys/blade/internal/logging"
 	gen "git.solsynth.dev/sosys/spec/gen/go"
+	"github.com/google/uuid"
 	"golang.org/x/net/websocket"
 )
 
@@ -293,6 +295,8 @@ func (s *Service) HandlePacket(ctx context.Context, account *gen.DyAccount, devi
 }
 
 func (s *Service) HandleConnection(ctx context.Context, account *gen.DyAccount, deviceID string, conn *websocket.Conn) {
+	deviceID = s.normalizeDeviceID(deviceID)
+
 	logging.Log.Info().
 		Str("accountId", account.GetId()).
 		Str("deviceId", deviceID).
@@ -373,6 +377,17 @@ func (s *Service) HandleConnection(ctx context.Context, account *gen.DyAccount, 
 			_ = entry.sendJSON(Packet{Type: PacketTypeError, ErrorMessage: err.Error()})
 		}
 	}
+}
+
+func (s *Service) normalizeDeviceID(deviceID string) string {
+	trimmed := strings.TrimSpace(deviceID)
+	if trimmed != "" {
+		return trimmed
+	}
+
+	generated := uuid.NewString()
+	logging.Log.Warn().Str("deviceId", generated).Msg("Missing websocket client_id; generated UUID fallback")
+	return generated
 }
 
 func (c *wsConnection) sendProto(packet *gen.DyWebSocketPacket) error {

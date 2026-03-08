@@ -60,15 +60,6 @@ func (h *HttpHandler) Handle(c *gin.Context) {
 	}
 
 	deviceID := auth.Session.GetClientId()
-	if deviceID == "" {
-		logging.Log.Warn().
-			Str("path", requestPath).
-			Str("accountId", auth.Account.GetId()).
-			Str("origin", requestOrigin).
-			Msg("Rejected websocket request due to missing client_id")
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "session does not contain client_id"})
-		return
-	}
 	if deviceAlt != "" {
 		deviceID = deviceID + "+" + deviceAlt
 	}

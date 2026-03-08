@@ -4,7 +4,7 @@ siteUrl = "http://localhost:5173"
 serializer = "JSON"
 
 [nats]
-url = "nats://nats:RE0zx7Qtady3Akyrn6eZXF@localhost:55749"
+url = "nats://nats:RE0zx7Qtady3Akyrn6eZXF@localhost:57132"
 websocketSubjectPrefix = "websocket_"
 
 [services]
@@ -62,8 +62,8 @@ allowedDeviceAlternatives = ["watch"]
 
 [maintenance]
 enabled = false
-mode = "full" # "full" blocks all proxied requests, "service" blocks only services listed below
-services = [] # only used when mode = "service"
+mode = "full"   # "full" blocks all proxied requests, "service" blocks only services listed below
+services = []   # only used when mode = "service"
 
 [[routes]]
 path = "/.well-known/openid-configuration"
