@@ -100,6 +100,23 @@ func (s *Service) TryAdd(account *gen.DyAccount, deviceID string, conn *websocke
 	return entry, old
 }
 
+func (s *Service) TryAddUniqueDevice(account *gen.DyAccount, deviceID string, conn *websocket.Conn) (*wsConnection, bool) {
+	key := connectionKey{accountID: account.GetId(), deviceID: deviceID}
+	entry := &wsConnection{account: account, deviceID: deviceID, conn: conn}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, existing := range s.connections {
+		if existing.deviceID == deviceID {
+			return nil, false
+		}
+	}
+
+	s.connections[key] = entry
+	return entry, true
+}
+
 func (s *Service) Disconnect(accountID, deviceID string, reason string) {
 	key := connectionKey{accountID: accountID, deviceID: deviceID}
 
@@ -302,20 +319,21 @@ func (s *Service) HandleConnection(ctx context.Context, account *gen.DyAccount, 
 		Str("deviceId", deviceID).
 		Msg("Handling websocket connection")
 
+	entry, accepted := s.TryAddUniqueDevice(account, deviceID, conn)
+	if !accepted {
+		logging.Log.Warn().
+			Str("accountId", account.GetId()).
+			Str("deviceId", deviceID).
+			Msg("Rejected websocket connection due to duplicated device id")
+		_ = websocket.Message.Send(conn, []byte(`{"type":"error","errorMessage":"duplicated client_id is not allowed"}`))
+		_ = conn.Close()
+		return
+	}
+
 	if s.events != nil {
 		if err := s.events.PublishConnected(ctx, account.GetId(), deviceID); err != nil {
 			logging.Log.Warn().Err(err).Str("accountId", account.GetId()).Str("deviceId", deviceID).Msg("Failed to publish websocket connect event")
 		}
-	}
-
-	entry, old := s.TryAdd(account, deviceID, conn)
-	if old != nil {
-		logging.Log.Warn().
-			Str("accountId", account.GetId()).
-			Str("deviceId", deviceID).
-			Msg("Replacing previous websocket connection for same account/device")
-		_ = old.sendJSON(Packet{Type: PacketTypeError, ErrorMessage: "Just connected somewhere else..."})
-		_ = old.conn.Close()
 	}
 
 	defer func() {
