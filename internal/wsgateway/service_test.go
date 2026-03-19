@@ -45,8 +45,12 @@ func TestServiceTryAddUniqueDevice_RejectsDuplicateDeviceID(t *testing.T) {
 	account1 := &gen.DyAccount{Id: "u1"}
 	account2 := &gen.DyAccount{Id: "u2"}
 
-	if _, ok := svc.TryAddUniqueDevice(account1, "d1", nil); !ok {
-		t.Fatal("expected first connection to be accepted")
+	svc.connections[connectionKey{accountID: "u1", deviceID: "d1"}] = &wsConnection{
+		account:  account1,
+		deviceID: "d1",
+		probe: func() bool {
+			return true
+		},
 	}
 	if _, ok := svc.TryAddUniqueDevice(account2, "d1", nil); ok {
 		t.Fatal("expected duplicate device id to be rejected")
@@ -63,5 +67,27 @@ func TestServiceTryAddUniqueDevice_AcceptsDifferentDeviceID(t *testing.T) {
 	}
 	if _, ok := svc.TryAddUniqueDevice(account2, "d2", nil); !ok {
 		t.Fatal("expected different device id to be accepted")
+	}
+}
+
+func TestServiceTryAddUniqueDevice_ReplacesStaleDuplicateDeviceID(t *testing.T) {
+	svc := NewService(Config{}, nil, nil, nil)
+	account1 := &gen.DyAccount{Id: "u1"}
+	account2 := &gen.DyAccount{Id: "u2"}
+
+	svc.connections[connectionKey{accountID: "u1", deviceID: "d1"}] = &wsConnection{
+		account:  account1,
+		deviceID: "d1",
+		probe: func() bool {
+			return false
+		},
+	}
+	if _, ok := svc.TryAddUniqueDevice(account2, "d1", nil); !ok {
+		t.Fatal("expected stale duplicate device id to be replaced")
+	}
+
+	accounts := svc.GetAccountsByDevice("d1")
+	if len(accounts) != 1 || accounts[0] != "u2" {
+		t.Fatalf("expected device d1 to belong only to u2 after replacement, got %#v", accounts)
 	}
 }

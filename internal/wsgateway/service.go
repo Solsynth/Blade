@@ -46,6 +46,7 @@ type wsConnection struct {
 	deviceID string
 	conn     *websocket.Conn
 	mu       sync.Mutex
+	probe    func() bool
 }
 
 type ConnectionSnapshot struct {
@@ -105,15 +106,25 @@ func (s *Service) TryAddUniqueDevice(account *gen.DyAccount, deviceID string, co
 	entry := &wsConnection{account: account, deviceID: deviceID, conn: conn}
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	for existingKey, existing := range s.connections {
+		if existing.deviceID != deviceID {
+			continue
+		}
 
-	for _, existing := range s.connections {
-		if existing.deviceID == deviceID {
+		s.mu.Unlock()
+		if existing.isAlive() {
 			return nil, false
 		}
-	}
 
+		s.mu.Lock()
+		current, ok := s.connections[existingKey]
+		if ok && current == existing {
+			delete(s.connections, existingKey)
+		}
+		break
+	}
 	s.connections[key] = entry
+	s.mu.Unlock()
 	return entry, true
 }
 
@@ -418,6 +429,10 @@ func (c *wsConnection) sendProto(packet *gen.DyWebSocketPacket) error {
 }
 
 func (c *wsConnection) sendJSON(packet Packet) error {
+	if c.conn == nil {
+		return errors.New("websocket connection is nil")
+	}
+
 	payload, err := json.Marshal(packet)
 	if err != nil {
 		return err
@@ -427,4 +442,22 @@ func (c *wsConnection) sendJSON(packet Packet) error {
 	defer c.mu.Unlock()
 
 	return websocket.Message.Send(c.conn, payload)
+}
+
+func (c *wsConnection) isAlive() bool {
+	if c != nil && c.probe != nil {
+		return c.probe()
+	}
+	if c == nil || c.conn == nil {
+		return false
+	}
+
+	if err := c.conn.SetWriteDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		return false
+	}
+	defer func() {
+		_ = c.conn.SetWriteDeadline(time.Time{})
+	}()
+
+	return c.sendJSON(Packet{Type: PacketTypePing}) == nil
 }
