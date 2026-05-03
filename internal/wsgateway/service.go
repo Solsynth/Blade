@@ -330,15 +330,14 @@ func (s *Service) HandleConnection(ctx context.Context, account *gen.DyAccount, 
 		Str("deviceId", deviceID).
 		Msg("Handling websocket connection")
 
-	entry, accepted := s.TryAddUniqueDevice(account, deviceID, conn)
-	if !accepted {
-		logging.Log.Warn().
+	entry, old := s.TryAdd(account, deviceID, conn)
+	if old != nil {
+		logging.Log.Info().
 			Str("accountId", account.GetId()).
 			Str("deviceId", deviceID).
-			Msg("Rejected websocket connection due to duplicated device id")
-		_ = websocket.Message.Send(conn, []byte(`{"type":"error","errorMessage":"duplicated client_id is not allowed"}`))
-		_ = conn.Close()
-		return
+			Msg("Disconnecting previous websocket connection due to duplicated device id")
+		_ = old.sendJSON(Packet{Type: PacketTypeError, ErrorMessage: "connection replaced by new client"})
+		_ = old.conn.Close()
 	}
 
 	if s.events != nil {
