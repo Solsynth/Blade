@@ -110,24 +110,27 @@ func main() {
 		}
 
 		var forwarder wsgateway.UnknownPacketForwarder
+		var eventPublisher wsgateway.ConnectionEventPublisher
 		natsURL := cfg.NATS.URL
 		if natsURL != "" {
 			natsConn, err = nats.Connect(natsURL)
 			if err != nil {
 				logging.Log.Fatal().Err(err).Str("natsURL", natsURL).Msg("Failed to connect to NATS")
 			}
-			forwarder = wsgateway.NewNatsForwarder(natsConn, wsgateway.NATSForwarderConfig{
+			natsForwarder := wsgateway.NewNatsForwarder(natsConn, wsgateway.NATSForwarderConfig{
 				SubjectPrefix: cfg.NATS.WebSocketSubjectPrefix,
 			})
+			forwarder = natsForwarder
+			eventPublisher = natsForwarder
 			logging.Log.Info().
 				Str("natsURL", natsURL).
 				Str("subjectPrefix", cfg.NATS.WebSocketSubjectPrefix).
-				Msg("Enabled websocket unknown packet forwarder via NATS")
+				Msg("Enabled websocket NATS forwarding and connection events")
 		} else {
-			logging.Log.Warn().Msg("NATS URL is empty; websocket unknown packet forwarding is disabled")
+			logging.Log.Warn().Msg("NATS URL is empty; websocket unknown packet forwarding and connection events are disabled")
 		}
 
-		wsService = wsgateway.NewService(wsCfg, nil, forwarder, nil)
+		wsService = wsgateway.NewService(wsCfg, nil, forwarder, eventPublisher)
 		wsHandler := wsgateway.NewHttpHandler(authenticator, wsService, wsCfg)
 		r.GET(cfg.WebSocket.Path, wsHandler.Handle)
 
