@@ -10,7 +10,7 @@ import (
 )
 
 func TestGRPCService_GetWebsocketConnectionStatus(t *testing.T) {
-	svc := NewService(Config{}, nil, nil, nil)
+	svc := NewService(Config{}, nil, nil, nil, nil)
 	svc.connections[connectionKey{accountID: "u1", deviceID: "d1"}] = &wsConnection{
 		account:  &gen.DyAccount{Id: "u1"},
 		deviceID: "d1",
@@ -40,7 +40,7 @@ func TestGRPCService_GetWebsocketConnectionStatus(t *testing.T) {
 }
 
 func TestGRPCService_GetWebsocketConnectionStatusBatch(t *testing.T) {
-	svc := NewService(Config{}, nil, nil, nil)
+	svc := NewService(Config{}, nil, nil, nil, nil)
 	svc.connections[connectionKey{accountID: "u1", deviceID: "d1"}] = &wsConnection{
 		account:  &gen.DyAccount{Id: "u1"},
 		deviceID: "d1",
@@ -63,7 +63,7 @@ func TestGRPCService_GetWebsocketConnectionStatusBatch(t *testing.T) {
 }
 
 func TestGRPCService_GetAllConnectedUserIds(t *testing.T) {
-	svc := NewService(Config{}, nil, nil, nil)
+	svc := NewService(Config{}, nil, nil, nil, nil)
 	svc.connections[connectionKey{accountID: "u2", deviceID: "d2"}] = &wsConnection{
 		account:  &gen.DyAccount{Id: "u2"},
 		deviceID: "d2",
@@ -87,7 +87,7 @@ func TestGRPCService_GetAllConnectedUserIds(t *testing.T) {
 }
 
 func TestGRPCService_ReceiveWebSocketPacket_Validation(t *testing.T) {
-	server := NewGRPCService(NewService(Config{}, nil, nil, nil))
+	server := NewGRPCService(NewService(Config{}, nil, nil, nil, nil))
 
 	_, err := server.ReceiveWebSocketPacket(context.Background(), &gen.DyReceiveWebSocketPacketRequest{})
 	if err == nil {

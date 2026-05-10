@@ -192,6 +192,30 @@ func AuthenticateRequest(ctx context.Context, auth TokenAuthenticator, r *http.R
 	return auth.Authenticate(authCtx, tokenInfo, r)
 }
 
+func Reauthenticate(ctx context.Context, auth TokenAuthenticator, tokenInfo TokenInfo, r *http.Request) (*AuthResult, error) {
+	if auth == nil {
+		return nil, errors.New("token authenticator is not configured")
+	}
+	if strings.TrimSpace(tokenInfo.Token) == "" {
+		return nil, errors.New("no token was provided")
+	}
+
+	authCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+
+	return auth.Authenticate(authCtx, tokenInfo, r)
+}
+
+func CloneRequestMetadata(r *http.Request) *http.Request {
+	if r == nil {
+		return nil
+	}
+
+	clone := r.Clone(context.Background())
+	clone.Body = nil
+	return clone
+}
+
 func ExtractIP(r *http.Request) string {
 	if xff := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); xff != "" {
 		parts := strings.Split(xff, ",")

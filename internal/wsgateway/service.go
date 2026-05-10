@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"git.solsynth.dev/sosys/blade/internal/logging"
+	dyauth "git.solsynth.dev/sosys/blade/pkg/auth"
 	gen "git.solsynth.dev/sosys/spec/gen/go"
 	"github.com/google/uuid"
 	"golang.org/x/net/websocket"
@@ -30,6 +32,13 @@ type ConnectionEventPublisher interface {
 	PublishDisconnected(ctx context.Context, accountID string, deviceID string, isOffline bool) error
 }
 
+type SessionAuthContext struct {
+	Account   *gen.DyAccount
+	Session   *gen.DyAuthSession
+	TokenInfo dyauth.TokenInfo
+	Request   *http.Request
+}
+
 type Config struct {
 	KeepAliveInterval time.Duration
 	MaxMessageBytes   int64
@@ -42,11 +51,19 @@ type connectionKey struct {
 }
 
 type wsConnection struct {
-	account  *gen.DyAccount
-	deviceID string
-	conn     *websocket.Conn
-	mu       sync.Mutex
-	probe    func() bool
+	account   *gen.DyAccount
+	sessionID string
+	deviceID  string
+	expiresAt time.Time
+	tokenInfo dyauth.TokenInfo
+	authReq   *http.Request
+	conn      *websocket.Conn
+	cancel    context.CancelFunc
+	done      chan struct{}
+	closeOnce sync.Once
+	mu        sync.Mutex
+	metaMu    sync.RWMutex
+	probe     func() bool
 }
 
 type ConnectionSnapshot struct {
@@ -55,16 +72,17 @@ type ConnectionSnapshot struct {
 }
 
 type Service struct {
-	cfg       Config
-	handlers  map[string]PacketHandler
-	forwarder UnknownPacketForwarder
-	events    ConnectionEventPublisher
+	cfg           Config
+	handlers      map[string]PacketHandler
+	forwarder     UnknownPacketForwarder
+	events        ConnectionEventPublisher
+	authenticator dyauth.TokenAuthenticator
 
 	mu          sync.RWMutex
 	connections map[connectionKey]*wsConnection
 }
 
-func NewService(cfg Config, handlers []PacketHandler, forwarder UnknownPacketForwarder, events ConnectionEventPublisher) *Service {
+func NewService(cfg Config, handlers []PacketHandler, forwarder UnknownPacketForwarder, events ConnectionEventPublisher, authenticator dyauth.TokenAuthenticator) *Service {
 	handlerMap := make(map[string]PacketHandler, len(handlers))
 	for _, h := range handlers {
 		handlerMap[h.PacketType()] = h
@@ -81,17 +99,29 @@ func NewService(cfg Config, handlers []PacketHandler, forwarder UnknownPacketFor
 	}
 
 	return &Service{
-		cfg:         cfg,
-		handlers:    handlerMap,
-		forwarder:   forwarder,
-		events:      events,
-		connections: make(map[connectionKey]*wsConnection),
+		cfg:           cfg,
+		handlers:      handlerMap,
+		forwarder:     forwarder,
+		events:        events,
+		authenticator: authenticator,
+		connections:   make(map[connectionKey]*wsConnection),
 	}
 }
 
-func (s *Service) TryAdd(account *gen.DyAccount, deviceID string, conn *websocket.Conn) (*wsConnection, *wsConnection) {
+func (s *Service) TryAdd(auth SessionAuthContext, deviceID string, conn *websocket.Conn, cancel context.CancelFunc) (*wsConnection, *wsConnection) {
+	account := auth.Account
 	key := connectionKey{accountID: account.GetId(), deviceID: deviceID}
-	entry := &wsConnection{account: account, deviceID: deviceID, conn: conn}
+	entry := &wsConnection{
+		account:   account,
+		sessionID: auth.Session.GetId(),
+		deviceID:  deviceID,
+		expiresAt: timestampToTime(auth.Session.GetExpiredAt()),
+		tokenInfo: auth.TokenInfo,
+		authReq:   auth.Request,
+		conn:      conn,
+		cancel:    cancel,
+		done:      make(chan struct{}),
+	}
 
 	s.mu.Lock()
 	old := s.connections[key]
@@ -103,7 +133,7 @@ func (s *Service) TryAdd(account *gen.DyAccount, deviceID string, conn *websocke
 
 func (s *Service) TryAddUniqueDevice(account *gen.DyAccount, deviceID string, conn *websocket.Conn) (*wsConnection, bool) {
 	key := connectionKey{accountID: account.GetId(), deviceID: deviceID}
-	entry := &wsConnection{account: account, deviceID: deviceID, conn: conn}
+	entry := &wsConnection{account: account, deviceID: deviceID, conn: conn, done: make(chan struct{})}
 
 	s.mu.Lock()
 	for existingKey, existing := range s.connections {
@@ -142,10 +172,113 @@ func (s *Service) Disconnect(accountID, deviceID string, reason string) {
 		return
 	}
 
-	if reason != "" {
-		_ = entry.sendJSON(Packet{Type: PacketTypeError, ErrorMessage: reason})
+	entry.close(reason)
+}
+
+func (s *Service) DisconnectSession(sessionID, accountID, deviceID, reason string) int {
+	sessionID = strings.TrimSpace(sessionID)
+	accountID = strings.TrimSpace(accountID)
+	deviceID = strings.TrimSpace(deviceID)
+
+	s.mu.Lock()
+	targets := make([]*wsConnection, 0, len(s.connections))
+	for key, entry := range s.connections {
+		if sessionID != "" && entry.getSessionID() == sessionID {
+			targets = append(targets, entry)
+			delete(s.connections, key)
+			continue
+		}
+		if sessionID == "" && accountID != "" && key.accountID == accountID && deviceID != "" && deviceIDMatches(entry.deviceID, deviceID) {
+			targets = append(targets, entry)
+			delete(s.connections, key)
+		}
 	}
-	_ = entry.conn.Close()
+	s.mu.Unlock()
+
+	for _, entry := range targets {
+		entry.close(reason)
+	}
+	return len(targets)
+}
+
+func deviceIDMatches(activeDeviceID, revokedDeviceID string) bool {
+	activeDeviceID = strings.TrimSpace(activeDeviceID)
+	revokedDeviceID = strings.TrimSpace(revokedDeviceID)
+	if activeDeviceID == "" || revokedDeviceID == "" {
+		return false
+	}
+	return activeDeviceID == revokedDeviceID || strings.HasPrefix(activeDeviceID, revokedDeviceID+"+")
+}
+
+func timestampToTime(ts interface{ AsTime() time.Time }) time.Time {
+	if ts == nil {
+		return time.Time{}
+	}
+	return ts.AsTime().UTC()
+}
+
+func (s *Service) startSessionMonitor(ctx context.Context, entry *wsConnection) {
+	if s.authenticator == nil || strings.TrimSpace(entry.tokenInfo.Token) == "" {
+		return
+	}
+
+	go func() {
+		for {
+			waitFor, ok := entry.nextReauthWait()
+			if !ok {
+				return
+			}
+
+			timer := time.NewTimer(waitFor)
+			select {
+			case <-ctx.Done():
+				if !timer.Stop() {
+					<-timer.C
+				}
+				return
+			case <-timer.C:
+			}
+
+			if err := s.reauthenticateConnection(ctx, entry); err != nil {
+				logging.Log.Warn().
+					Err(err).
+					Str("accountId", entry.getAccountID()).
+					Str("deviceId", entry.deviceID).
+					Str("sessionId", entry.getSessionID()).
+					Msg("Disconnecting websocket connection after session reauthentication failure")
+				s.Disconnect(entry.getAccountID(), entry.deviceID, "session expired; please reconnect")
+				return
+			}
+		}
+	}()
+}
+
+func (s *Service) reauthenticateConnection(ctx context.Context, entry *wsConnection) error {
+	authReq := dyauth.CloneRequestMetadata(entry.authReq)
+	result, err := dyauth.Reauthenticate(ctx, s.authenticator, entry.tokenInfo, authReq)
+	if err != nil {
+		return err
+	}
+	if result == nil || result.Account == nil || result.Session == nil {
+		return errors.New("reauthentication returned incomplete session data")
+	}
+	if strings.TrimSpace(result.Account.GetId()) != entry.getAccountID() {
+		return fmt.Errorf("reauthenticated account mismatch: got %s", result.Account.GetId())
+	}
+
+	newExpiry := timestampToTime(result.Session.GetExpiredAt())
+	if !newExpiry.IsZero() && !newExpiry.After(time.Now().UTC()) {
+		return errors.New("reauthenticated session is already expired")
+	}
+
+	entry.updateSession(result.Account, result.Session)
+	logging.Log.Debug().
+		Str("accountId", result.Account.GetId()).
+		Str("deviceId", entry.deviceID).
+		Str("sessionId", result.Session.GetId()).
+		Time("expiredAt", newExpiry).
+		Msg("Reauthenticated websocket session")
+	return nil
 }
 
 func (s *Service) remove(accountID, deviceID string) {
@@ -322,42 +455,48 @@ func (s *Service) HandlePacket(ctx context.Context, account *gen.DyAccount, devi
 	return fmt.Errorf("unprocessable packet: %s", packet.Type)
 }
 
-func (s *Service) HandleConnection(ctx context.Context, account *gen.DyAccount, deviceID string, conn *websocket.Conn) {
+func (s *Service) HandleConnection(ctx context.Context, auth SessionAuthContext, deviceID string, conn *websocket.Conn) {
+	account := auth.Account
 	deviceID = s.normalizeDeviceID(deviceID)
+	connCtx, cancel := context.WithCancel(ctx)
 
 	logging.Log.Info().
 		Str("accountId", account.GetId()).
 		Str("deviceId", deviceID).
+		Str("sessionId", auth.Session.GetId()).
 		Msg("Handling websocket connection")
 
-	entry, old := s.TryAdd(account, deviceID, conn)
+	entry, old := s.TryAdd(auth, deviceID, conn, cancel)
 	if old != nil {
 		logging.Log.Info().
 			Str("accountId", account.GetId()).
 			Str("deviceId", deviceID).
 			Msg("Disconnecting previous websocket connection due to duplicated device id")
-		_ = old.sendJSON(Packet{Type: PacketTypeError, ErrorMessage: "connection replaced by new client"})
-		_ = old.conn.Close()
+		old.close("connection replaced by new client")
 	}
 
+	s.startSessionMonitor(connCtx, entry)
+
 	if s.events != nil {
-		if err := s.events.PublishConnected(ctx, account.GetId(), deviceID); err != nil {
+		if err := s.events.PublishConnected(connCtx, account.GetId(), deviceID); err != nil {
 			logging.Log.Warn().Err(err).Str("accountId", account.GetId()).Str("deviceId", deviceID).Msg("Failed to publish websocket connect event")
 		}
 	}
 
 	defer func() {
+		cancel()
 		s.remove(account.GetId(), deviceID)
 		isOffline := !s.GetAccountIsConnected(account.GetId())
 		if s.events != nil {
-			if err := s.events.PublishDisconnected(ctx, account.GetId(), deviceID, isOffline); err != nil {
+			if err := s.events.PublishDisconnected(connCtx, account.GetId(), deviceID, isOffline); err != nil {
 				logging.Log.Warn().Err(err).Str("accountId", account.GetId()).Str("deviceId", deviceID).Msg("Failed to publish websocket disconnect event")
 			}
 		}
-		_ = conn.Close()
+		entry.close("")
 		logging.Log.Info().
 			Str("accountId", account.GetId()).
 			Str("deviceId", deviceID).
+			Str("sessionId", entry.getSessionID()).
 			Bool("isOffline", isOffline).
 			Msg("Websocket connection closed")
 	}()
@@ -394,7 +533,7 @@ func (s *Service) HandleConnection(ctx context.Context, account *gen.DyAccount, 
 			continue
 		}
 
-		if err := s.HandlePacket(ctx, account, deviceID, packet); err != nil {
+		if err := s.HandlePacket(connCtx, account, deviceID, packet); err != nil {
 			logging.Log.Warn().
 				Err(err).
 				Str("packetType", packet.Type).
@@ -441,6 +580,85 @@ func (c *wsConnection) sendJSON(packet Packet) error {
 	defer c.mu.Unlock()
 
 	return websocket.Message.Send(c.conn, payload)
+}
+
+func (c *wsConnection) close(reason string) {
+	if c == nil {
+		return
+	}
+
+	c.closeOnce.Do(func() {
+		if c.cancel != nil {
+			c.cancel()
+		}
+		if reason != "" {
+			_ = c.sendJSON(Packet{Type: PacketTypeError, ErrorMessage: reason})
+		}
+		if c.conn != nil {
+			_ = c.conn.Close()
+		}
+		if c.done != nil {
+			close(c.done)
+		}
+	})
+}
+
+func (c *wsConnection) getAccountID() string {
+	c.metaMu.RLock()
+	defer c.metaMu.RUnlock()
+	if c.account == nil {
+		return ""
+	}
+	return c.account.GetId()
+}
+
+func (c *wsConnection) getSessionID() string {
+	c.metaMu.RLock()
+	defer c.metaMu.RUnlock()
+	return strings.TrimSpace(c.sessionID)
+}
+
+func (c *wsConnection) nextReauthWait() (time.Duration, bool) {
+	if c == nil {
+		return 0, false
+	}
+
+	c.metaMu.RLock()
+	expiresAt := c.expiresAt
+	done := c.done
+	c.metaMu.RUnlock()
+
+	if done != nil {
+		select {
+		case <-done:
+			return 0, false
+		default:
+		}
+	}
+
+	if expiresAt.IsZero() {
+		return 0, false
+	}
+
+	waitFor := time.Until(expiresAt)
+	if waitFor < 0 {
+		waitFor = 0
+	}
+	return waitFor, true
+}
+
+func (c *wsConnection) updateSession(account *gen.DyAccount, session *gen.DyAuthSession) {
+	if c == nil || session == nil {
+		return
+	}
+
+	c.metaMu.Lock()
+	if account != nil {
+		c.account = account
+	}
+	c.sessionID = session.GetId()
+	c.expiresAt = timestampToTime(session.GetExpiredAt())
+	c.metaMu.Unlock()
 }
 
 func (c *wsConnection) isAlive() bool {

@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -21,6 +23,11 @@ import (
 	"github.com/nats-io/nats.go"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
+)
+
+const (
+	natsInitialRetryWait = 2 * time.Second
+	natsReconnectWait    = 2 * time.Second
 )
 
 func main() {
@@ -113,7 +120,7 @@ func main() {
 		var eventPublisher wsgateway.ConnectionEventPublisher
 		natsURL := cfg.NATS.URL
 		if natsURL != "" {
-			natsConn, err = nats.Connect(natsURL)
+			natsConn, err = connectNATSWithRetry(natsURL)
 			if err != nil {
 				logging.Log.Fatal().Err(err).Str("natsURL", natsURL).Msg("Failed to connect to NATS")
 			}
@@ -130,7 +137,15 @@ func main() {
 			logging.Log.Warn().Msg("NATS URL is empty; websocket unknown packet forwarding and connection events are disabled")
 		}
 
-		wsService = wsgateway.NewService(wsCfg, nil, forwarder, eventPublisher)
+		wsService = wsgateway.NewService(wsCfg, nil, forwarder, eventPublisher, authenticator)
+		if natsConn != nil {
+			if _, err := wsgateway.SubscribeAuthSessionRevocations(natsConn, wsService); err != nil {
+				logging.Log.Fatal().Err(err).Msg("Failed to subscribe to auth session revocation events")
+			}
+			logging.Log.Info().
+				Str("subject", wsgateway.AuthSessionRevokedSubject).
+				Msg("Subscribed to auth session revocation events")
+		}
 		wsHandler := wsgateway.NewHttpHandler(authenticator, wsService, wsCfg)
 		r.GET(cfg.WebSocket.Path, wsHandler.Handle)
 
@@ -290,4 +305,55 @@ func main() {
 	}
 
 	logging.Log.Info().Msg("Server exited")
+}
+
+func connectNATSWithRetry(natsURL string) (*nats.Conn, error) {
+	normalizedURL := strings.TrimSpace(natsURL)
+	if normalizedURL == "" {
+		return nil, errors.New("nats URL is empty")
+	}
+
+	opts := []nats.Option{
+		nats.Name("blade-gateway"),
+		nats.RetryOnFailedConnect(true),
+		nats.MaxReconnects(-1),
+		nats.ReconnectWait(natsReconnectWait),
+		nats.DisconnectErrHandler(func(conn *nats.Conn, err error) {
+			log := logging.Log.Warn().Str("server", conn.ConnectedUrl())
+			if err != nil {
+				log = log.Err(err)
+			}
+			log.Msg("Disconnected from NATS; waiting to reconnect")
+		}),
+		nats.ReconnectHandler(func(conn *nats.Conn) {
+			logging.Log.Info().
+				Str("server", conn.ConnectedUrl()).
+				Msg("Reconnected to NATS")
+		}),
+		nats.ClosedHandler(func(conn *nats.Conn) {
+			log := logging.Log.Warn()
+			if lastErr := conn.LastError(); lastErr != nil {
+				log = log.Err(lastErr)
+			}
+			log.Msg("NATS connection closed")
+		}),
+	}
+
+	for {
+		conn, err := nats.Connect(normalizedURL, opts...)
+		if err == nil {
+			logging.Log.Info().
+				Str("natsURL", normalizedURL).
+				Str("status", conn.Status().String()).
+				Msg("Initialized NATS connection")
+			return conn, nil
+		}
+
+		logging.Log.Warn().
+			Err(err).
+			Str("natsURL", normalizedURL).
+			Dur("retryIn", natsInitialRetryWait).
+			Msg("NATS not ready yet; retrying connection")
+		time.Sleep(natsInitialRetryWait)
+	}
 }

@@ -58,6 +58,7 @@ func (h *HttpHandler) Handle(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
 		return
 	}
+	tokenInfo, _ := dyauth.ExtractToken(c.Request)
 
 	deviceID := auth.Session.GetClientId()
 	if deviceAlt != "" {
@@ -83,10 +84,16 @@ func (h *HttpHandler) Handle(c *gin.Context) {
 			logging.Log.Info().
 				Str("accountId", auth.Account.GetId()).
 				Str("deviceId", deviceID).
+				Str("sessionId", auth.Session.GetId()).
 				Str("origin", requestOrigin).
 				Str("path", requestPath).
 				Msg("Upgraded websocket connection")
-			h.service.HandleConnection(c.Request.Context(), auth.Account, deviceID, conn)
+			h.service.HandleConnection(c.Request.Context(), SessionAuthContext{
+				Account:   auth.Account,
+				Session:   auth.Session,
+				TokenInfo: tokenInfo,
+				Request:   dyauth.CloneRequestMetadata(c.Request),
+			}, deviceID, conn)
 		}),
 	}
 
