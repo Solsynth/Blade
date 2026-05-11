@@ -138,7 +138,7 @@ func ExtractToken(r *http.Request) (TokenInfo, bool) {
 		return TokenInfo{Token: tk, Type: TokenTypeLegacyUserToken}, true
 	}
 
-	authz := strings.TrimSpace(r.Header.Get("Authorization"))
+	authz := NormalizeAuthHeader(ExtractRawAuthHeader(r))
 	if authz != "" {
 		scheme, token, ok := splitAuthorizationHeader(authz)
 		if ok {
@@ -230,6 +230,37 @@ func ExtractIP(r *http.Request) string {
 	}
 
 	return strings.TrimSpace(r.RemoteAddr)
+}
+
+func ExtractRawAuthHeader(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+
+	if authz := strings.TrimSpace(r.Header.Get("Authorization")); authz != "" {
+		return authz
+	}
+	if authz := strings.TrimSpace(r.Header.Get("X-Forwarded-Authorization")); authz != "" {
+		return authz
+	}
+	if authz := strings.TrimSpace(r.Header.Get("X-Original-Authorization")); authz != "" {
+		return authz
+	}
+	return ""
+}
+
+func NormalizeAuthHeader(raw string) string {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return ""
+	}
+	if len(value) >= 2 && value[0] == '[' && value[len(value)-1] == ']' {
+		value = strings.TrimSpace(value[1 : len(value)-1])
+	}
+	if len(value) >= 2 && value[0] == '"' && value[len(value)-1] == '"' {
+		value = strings.TrimSpace(value[1 : len(value)-1])
+	}
+	return value
 }
 
 func splitAuthorizationHeader(value string) (scheme string, token string, ok bool) {

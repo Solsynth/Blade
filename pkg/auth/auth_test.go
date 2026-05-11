@@ -48,6 +48,38 @@ func TestExtractTokenBotScheme(t *testing.T) {
 	}
 }
 
+func TestExtractTokenBotSchemeFromForwardedAuthorization(t *testing.T) {
+	req := httptest.NewRequest("GET", "/ws", nil)
+	req.Header.Set("X-Forwarded-Authorization", "Bot key.jwt.token")
+
+	got, ok := ExtractToken(req)
+	if !ok {
+		t.Fatal("expected token")
+	}
+	if got.Token != "key.jwt.token" {
+		t.Fatalf("expected api key token, got %q", got.Token)
+	}
+	if got.Type != TokenTypeAPIKeyJWT {
+		t.Fatalf("expected api key jwt, got %q", got.Type)
+	}
+}
+
+func TestExtractTokenNormalizesWrappedAuthorizationHeader(t *testing.T) {
+	req := httptest.NewRequest("GET", "/ws", nil)
+	req.Header.Set("X-Original-Authorization", "[Bot key.jwt.token]")
+
+	got, ok := ExtractToken(req)
+	if !ok {
+		t.Fatal("expected token")
+	}
+	if got.Token != "key.jwt.token" {
+		t.Fatalf("expected normalized token, got %q", got.Token)
+	}
+	if got.Type != TokenTypeAPIKeyJWT {
+		t.Fatalf("expected api key jwt, got %q", got.Type)
+	}
+}
+
 func TestExtractTokenLegacyAkField(t *testing.T) {
 	req := httptest.NewRequest("GET", "/ws", nil)
 	req.Header.Set("Authorization", "AkField legacy-api-key")
