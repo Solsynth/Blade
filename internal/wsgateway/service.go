@@ -218,7 +218,7 @@ func timestampToTime(ts interface{ AsTime() time.Time }) time.Time {
 }
 
 func (s *Service) startSessionMonitor(ctx context.Context, entry *wsConnection) {
-	if s.authenticator == nil || strings.TrimSpace(entry.tokenInfo.Token) == "" {
+	if s.authenticator == nil || !supportsSessionReauth(entry.tokenInfo) {
 		return
 	}
 
@@ -251,6 +251,19 @@ func (s *Service) startSessionMonitor(ctx context.Context, entry *wsConnection) 
 			}
 		}
 	}()
+}
+
+func supportsSessionReauth(tokenInfo dyauth.TokenInfo) bool {
+	if strings.TrimSpace(tokenInfo.Token) == "" {
+		return false
+	}
+
+	switch tokenInfo.Type {
+	case dyauth.TokenTypeAPIKeyJWT, dyauth.TokenTypeLegacyAPIKey:
+		return false
+	default:
+		return true
+	}
 }
 
 func (s *Service) reauthenticateConnection(ctx context.Context, entry *wsConnection) error {

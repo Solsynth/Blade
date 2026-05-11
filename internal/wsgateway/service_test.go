@@ -194,3 +194,18 @@ func TestServiceReauthenticateConnection_RefreshesExpiry(t *testing.T) {
 		t.Fatalf("expected expiry %v, got %v", newExpiry, gotExpiry)
 	}
 }
+
+func TestSupportsSessionReauth(t *testing.T) {
+	if !supportsSessionReauth(dyauth.TokenInfo{Token: "user-token", Type: dyauth.TokenTypeUserJWT}) {
+		t.Fatal("expected user jwt to support session reauth")
+	}
+	if !supportsSessionReauth(dyauth.TokenInfo{Token: "legacy-user-token", Type: dyauth.TokenTypeLegacyUserToken}) {
+		t.Fatal("expected legacy user token to support session reauth")
+	}
+	if supportsSessionReauth(dyauth.TokenInfo{Token: "api-key-token", Type: dyauth.TokenTypeAPIKeyJWT}) {
+		t.Fatal("expected api key jwt to skip session reauth")
+	}
+	if supportsSessionReauth(dyauth.TokenInfo{Token: "legacy-api-key", Type: dyauth.TokenTypeLegacyAPIKey}) {
+		t.Fatal("expected legacy api key to skip session reauth")
+	}
+}
