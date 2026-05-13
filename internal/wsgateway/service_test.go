@@ -108,6 +108,30 @@ func TestServiceTryAddUniqueDevice_ReplacesStaleDuplicateDeviceID(t *testing.T) 
 	}
 }
 
+func TestServiceGetAccountConnections_ExcludesDeviceIDs(t *testing.T) {
+	svc := NewService(Config{}, nil, nil, nil, nil)
+	svc.connections[connectionKey{accountID: "u1", deviceID: "d1"}] = &wsConnection{
+		account:  &gen.DyAccount{Id: "u1"},
+		deviceID: "d1",
+	}
+	svc.connections[connectionKey{accountID: "u1", deviceID: "d2"}] = &wsConnection{
+		account:  &gen.DyAccount{Id: "u1"},
+		deviceID: "d2",
+	}
+	svc.connections[connectionKey{accountID: "u2", deviceID: "d3"}] = &wsConnection{
+		account:  &gen.DyAccount{Id: "u2"},
+		deviceID: "d3",
+	}
+
+	got := svc.getAccountConnections("u1", []string{" d2 ", "", "missing"})
+	if len(got) != 1 {
+		t.Fatalf("expected 1 included connection, got %d", len(got))
+	}
+	if got[0].deviceID != "d1" {
+		t.Fatalf("expected d1 to receive packet, got %q", got[0].deviceID)
+	}
+}
+
 func TestServiceDisconnectSession_MatchesSessionID(t *testing.T) {
 	svc := NewService(Config{}, nil, nil, nil, nil)
 	done := make(chan struct{})

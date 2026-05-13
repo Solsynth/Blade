@@ -26,7 +26,7 @@ func (s *GRPCService) PushWebSocketPacket(_ context.Context, req *gen.DyPushWebS
 	if req.GetPacket() == nil {
 		return nil, status.Error(codes.InvalidArgument, "packet is required")
 	}
-	s.service.SendPacketToAccount(req.GetUserId(), req.GetPacket())
+	s.service.SendPacketToAccountExcept(req.GetUserId(), req.GetPacket(), req.GetExcludedWebsocketDeviceIds())
 	return &emptypb.Empty{}, nil
 }
 
