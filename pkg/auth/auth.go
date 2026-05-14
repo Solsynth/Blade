@@ -3,6 +3,8 @@ package auth
 import (
 	"context"
 	"crypto/tls"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -132,8 +134,8 @@ func (a *GrpcTokenAuthenticator) Authenticate(ctx context.Context, tokenInfo Tok
 
 func ExtractToken(r *http.Request) (TokenInfo, bool) {
 	if tk := strings.TrimSpace(r.URL.Query().Get("tk")); tk != "" {
-		if looksLikeJWT(tk) {
-			return TokenInfo{Token: tk, Type: TokenTypeUserJWT}, true
+		if tokenType, ok := classifyJWTTokenType(tk); ok {
+			return TokenInfo{Token: tk, Type: tokenType}, true
 		}
 		return TokenInfo{Token: tk, Type: TokenTypeLegacyUserToken}, true
 	}
@@ -144,17 +146,18 @@ func ExtractToken(r *http.Request) (TokenInfo, bool) {
 		if ok {
 			switch strings.ToLower(scheme) {
 			case "bearer":
-				typeName := TokenTypeUserJWT
-				if !looksLikeJWT(token) {
-					typeName = TokenTypeLegacyUserToken
+				if tokenType, ok := classifyJWTTokenType(token); ok {
+					return TokenInfo{Token: token, Type: tokenType}, true
 				}
-				return TokenInfo{Token: token, Type: typeName}, true
+				return TokenInfo{Token: token, Type: TokenTypeLegacyUserToken}, true
 			case "bot":
-				typeName := TokenTypeAPIKeyJWT
-				if !looksLikeJWT(token) {
-					typeName = TokenTypeLegacyAPIKey
+				if tokenType, ok := classifyJWTTokenType(token); ok {
+					if tokenType == TokenTypeUserJWT {
+						tokenType = TokenTypeAPIKeyJWT
+					}
+					return TokenInfo{Token: token, Type: tokenType}, true
 				}
-				return TokenInfo{Token: token, Type: typeName}, true
+				return TokenInfo{Token: token, Type: TokenTypeLegacyAPIKey}, true
 			case "atfield":
 				return TokenInfo{Token: token, Type: TokenTypeLegacyUserToken}, true
 			case "akfield":
@@ -167,8 +170,8 @@ func ExtractToken(r *http.Request) (TokenInfo, bool) {
 		tk := strings.TrimSpace(cookie.Value)
 		if tk != "" {
 			tt := TokenTypeLegacyUserToken
-			if looksLikeJWT(tk) {
-				tt = TokenTypeUserJWT
+			if tokenType, ok := classifyJWTTokenType(tk); ok {
+				tt = tokenType
 			}
 			return TokenInfo{Token: tk, Type: tt}, true
 		}
@@ -273,4 +276,56 @@ func splitAuthorizationHeader(value string) (scheme string, token string, ok boo
 
 func looksLikeJWT(token string) bool {
 	return strings.Count(token, ".") == 2
+}
+
+func classifyJWTTokenType(token string) (TokenType, bool) {
+	if !looksLikeJWT(token) {
+		return "", false
+	}
+
+	claims, err := parseJWTClaims(token)
+	if err != nil {
+		return TokenTypeUserJWT, true
+	}
+
+	tokenKind := strings.TrimSpace(strings.ToLower(claimString(claims, "type")))
+	if tokenKind == "api_key" || claimString(claims, "api_key_id") != "" {
+		return TokenTypeAPIKeyJWT, true
+	}
+
+	return TokenTypeUserJWT, true
+}
+
+func parseJWTClaims(token string) (map[string]any, error) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return nil, errors.New("invalid jwt structure")
+	}
+
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return nil, fmt.Errorf("decode jwt payload: %w", err)
+	}
+
+	var claims map[string]any
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return nil, fmt.Errorf("unmarshal jwt payload: %w", err)
+	}
+	return claims, nil
+}
+
+func claimString(claims map[string]any, key string) string {
+	if claims == nil {
+		return ""
+	}
+	value, ok := claims[key]
+	if !ok {
+		return ""
+	}
+	switch typed := value.(type) {
+	case string:
+		return typed
+	default:
+		return fmt.Sprint(typed)
+	}
 }

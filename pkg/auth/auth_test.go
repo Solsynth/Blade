@@ -1,10 +1,28 @@
 package auth
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 )
+
+func mustJWTForTest(t *testing.T, claims map[string]any) string {
+	t.Helper()
+
+	headerBytes, err := json.Marshal(map[string]any{"alg": "none", "typ": "JWT"})
+	if err != nil {
+		t.Fatalf("marshal header: %v", err)
+	}
+	claimBytes, err := json.Marshal(claims)
+	if err != nil {
+		t.Fatalf("marshal claims: %v", err)
+	}
+
+	return base64.RawURLEncoding.EncodeToString(headerBytes) + "." +
+		base64.RawURLEncoding.EncodeToString(claimBytes) + ".signature"
+}
 
 func TestExtractTokenPriorityQueryOverHeader(t *testing.T) {
 	req := httptest.NewRequest("GET", "/ws?tk=query-token", nil)
@@ -37,7 +55,10 @@ func TestExtractTokenBearerJWTType(t *testing.T) {
 
 func TestExtractTokenBotScheme(t *testing.T) {
 	req := httptest.NewRequest("GET", "/ws", nil)
-	req.Header.Set("Authorization", "Bot key.jwt.token")
+	req.Header.Set("Authorization", "Bot "+mustJWTForTest(t, map[string]any{
+		"type":       "api_key",
+		"api_key_id": "api-key-1",
+	}))
 
 	got, ok := ExtractToken(req)
 	if !ok {
@@ -50,13 +71,32 @@ func TestExtractTokenBotScheme(t *testing.T) {
 
 func TestExtractTokenBotSchemeFromForwardedAuthorization(t *testing.T) {
 	req := httptest.NewRequest("GET", "/ws", nil)
-	req.Header.Set("X-Forwarded-Authorization", "Bot key.jwt.token")
+	req.Header.Set("X-Forwarded-Authorization", "Bot "+mustJWTForTest(t, map[string]any{
+		"type":       "api_key",
+		"api_key_id": "api-key-1",
+	}))
 
 	got, ok := ExtractToken(req)
 	if !ok {
 		t.Fatal("expected token")
 	}
-	if got.Token != "key.jwt.token" {
+	if got.Type != TokenTypeAPIKeyJWT {
+		t.Fatalf("expected api key jwt, got %q", got.Type)
+	}
+}
+
+func TestExtractTokenQueryApiKeyJWTType(t *testing.T) {
+	token := mustJWTForTest(t, map[string]any{
+		"type":       "api_key",
+		"api_key_id": "api-key-1",
+	})
+	req := httptest.NewRequest("GET", "/ws?tk="+token, nil)
+
+	got, ok := ExtractToken(req)
+	if !ok {
+		t.Fatal("expected token")
+	}
+	if got.Token != token {
 		t.Fatalf("expected api key token, got %q", got.Token)
 	}
 	if got.Type != TokenTypeAPIKeyJWT {
@@ -66,13 +106,17 @@ func TestExtractTokenBotSchemeFromForwardedAuthorization(t *testing.T) {
 
 func TestExtractTokenNormalizesWrappedAuthorizationHeader(t *testing.T) {
 	req := httptest.NewRequest("GET", "/ws", nil)
-	req.Header.Set("X-Original-Authorization", "[Bot key.jwt.token]")
+	token := mustJWTForTest(t, map[string]any{
+		"type":       "api_key",
+		"api_key_id": "api-key-1",
+	})
+	req.Header.Set("X-Original-Authorization", "[Bot "+token+"]")
 
 	got, ok := ExtractToken(req)
 	if !ok {
 		t.Fatal("expected token")
 	}
-	if got.Token != "key.jwt.token" {
+	if got.Token != token {
 		t.Fatalf("expected normalized token, got %q", got.Token)
 	}
 	if got.Type != TokenTypeAPIKeyJWT {
