@@ -37,10 +37,7 @@ func (s *GRPCService) PushWebSocketPacketToUsers(_ context.Context, req *gen.DyP
 	if req.GetPacket() == nil {
 		return nil, status.Error(codes.InvalidArgument, "packet is required")
 	}
-	for _, userID := range req.GetUserIds() {
-		if strings.TrimSpace(userID) == "" {
-			continue
-		}
+	for _, userID := range uniqueTrimmedStrings(req.GetUserIds()) {
 		s.service.SendPacketToAccount(userID, req.GetPacket())
 	}
 	return &emptypb.Empty{}, nil
@@ -64,13 +61,31 @@ func (s *GRPCService) PushWebSocketPacketToDevices(_ context.Context, req *gen.D
 	if req.GetPacket() == nil {
 		return nil, status.Error(codes.InvalidArgument, "packet is required")
 	}
-	for _, deviceID := range req.GetDeviceIds() {
-		if strings.TrimSpace(deviceID) == "" {
-			continue
-		}
+	for _, deviceID := range uniqueTrimmedStrings(req.GetDeviceIds()) {
 		s.service.SendPacketToDevice(deviceID, req.GetPacket())
 	}
 	return &emptypb.Empty{}, nil
+}
+
+func uniqueTrimmedStrings(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		out = append(out, trimmed)
+	}
+	return out
 }
 
 func (s *GRPCService) GetWebsocketConnectionStatus(_ context.Context, req *gen.DyGetWebsocketConnectionStatusRequest) (*gen.DyGetWebsocketConnectionStatusResponse, error) {

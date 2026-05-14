@@ -2,6 +2,7 @@ package wsgateway
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	gen "git.solsynth.dev/sosys/spec/gen/go"
@@ -95,5 +96,13 @@ func TestGRPCService_ReceiveWebSocketPacket_Validation(t *testing.T) {
 	}
 	if status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("expected invalid argument, got %v", status.Code(err))
+	}
+}
+
+func TestUniqueTrimmedStrings(t *testing.T) {
+	got := uniqueTrimmedStrings([]string{" u1 ", "", "u2", "u1", " u2 ", "u3"})
+	want := []string{"u1", "u2", "u3"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected %#v, got %#v", want, got)
 	}
 }

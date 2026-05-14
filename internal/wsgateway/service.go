@@ -415,8 +415,21 @@ func (s *Service) SendPacketToAccount(accountID string, packet *gen.DyWebSocketP
 
 func (s *Service) SendPacketToAccountExcept(accountID string, packet *gen.DyWebSocketPacket, excludedDeviceIDs []string) {
 	entries := s.getAccountConnections(accountID, excludedDeviceIDs)
+	excluded := uniqueTrimmedStrings(excludedDeviceIDs)
+
+	logging.Log.Debug().
+		Str("accountId", accountID).
+		Str("packetType", packet.GetType()).
+		Strs("excludedDeviceIds", excluded).
+		Int("targetCount", len(entries)).
+		Msg("Selected websocket account push targets")
 
 	for _, entry := range entries {
+		logging.Log.Debug().
+			Str("accountId", accountID).
+			Str("deviceId", entry.deviceID).
+			Str("packetType", packet.GetType()).
+			Msg("Sending websocket packet to account connection")
 		if err := entry.sendProto(packet); err != nil {
 			logging.Log.Warn().Err(err).Str("accountId", accountID).Str("deviceId", entry.deviceID).Msg("Failed to send packet to account connection")
 		}
@@ -445,32 +458,46 @@ func makeDeviceIDSet(deviceIDs []string) map[string]struct{} {
 		return nil
 	}
 
-	out := make(map[string]struct{}, len(deviceIDs))
-	for _, deviceID := range deviceIDs {
-		trimmed := strings.TrimSpace(deviceID)
-		if trimmed == "" {
-			continue
-		}
-		out[trimmed] = struct{}{}
+	uniqueDeviceIDs := uniqueTrimmedStrings(deviceIDs)
+	out := make(map[string]struct{}, len(uniqueDeviceIDs))
+	for _, deviceID := range uniqueDeviceIDs {
+		out[deviceID] = struct{}{}
 	}
 	return out
 }
 
 func (s *Service) SendPacketToDevice(deviceID string, packet *gen.DyWebSocketPacket) {
+	entries := s.getDeviceConnections(deviceID)
+
+	logging.Log.Debug().
+		Str("deviceId", deviceID).
+		Str("packetType", packet.GetType()).
+		Int("targetCount", len(entries)).
+		Msg("Selected websocket device push targets")
+
+	for _, entry := range entries {
+		logging.Log.Debug().
+			Str("accountId", entry.getAccountID()).
+			Str("deviceId", deviceID).
+			Str("packetType", packet.GetType()).
+			Msg("Sending websocket packet to device connection")
+		if err := entry.sendProto(packet); err != nil {
+			logging.Log.Warn().Err(err).Str("accountId", entry.getAccountID()).Str("deviceId", deviceID).Msg("Failed to send packet to device")
+		}
+	}
+}
+
+func (s *Service) getDeviceConnections(deviceID string) []*wsConnection {
 	s.mu.RLock()
+	defer s.mu.RUnlock()
+
 	entries := make([]*wsConnection, 0)
 	for _, entry := range s.connections {
 		if entry.deviceID == deviceID {
 			entries = append(entries, entry)
 		}
 	}
-	s.mu.RUnlock()
-
-	for _, entry := range entries {
-		if err := entry.sendProto(packet); err != nil {
-			logging.Log.Warn().Err(err).Str("deviceId", deviceID).Msg("Failed to send packet to device")
-		}
-	}
+	return entries
 }
 
 func (s *Service) HandlePacket(ctx context.Context, account *gen.DyAccount, deviceID string, packet Packet) error {
