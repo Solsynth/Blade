@@ -5,7 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"git.solsynth.dev/sosys/blade/internal/config"
+	"srv.solsynth.dev/sosys/blade/internal/config"
 	"github.com/gin-gonic/gin"
 )
 

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"git.solsynth.dev/sosys/blade/internal/logging"
+	"srv.solsynth.dev/sosys/blade/internal/logging"
 	"github.com/nats-io/nats.go"
 )
 

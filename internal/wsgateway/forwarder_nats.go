@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"git.solsynth.dev/sosys/blade/internal/logging"
-	gen "git.solsynth.dev/sosys/spec/gen/go"
+	"srv.solsynth.dev/sosys/blade/internal/logging"
+	gen "src.solsynth.dev/sosys/go/proto"
 	"github.com/google/uuid"
 	"github.com/nats-io/nats.go"
 )

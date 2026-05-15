@@ -1,9 +1,8 @@
-module git.solsynth.dev/sosys/blade
+module srv.solsynth.dev/sosys/blade
 
-go 1.25.6
+go 1.26.2
 
 require (
-	git.solsynth.dev/sosys/spec v0.0.0-20260513181342-f9cb9c8d96ae
 	github.com/gin-contrib/cors v1.7.6
 	github.com/gin-gonic/gin v1.10.1
 	github.com/google/uuid v1.6.0
@@ -13,6 +12,7 @@ require (
 	golang.org/x/net v0.48.0
 	google.golang.org/grpc v1.79.1
 	google.golang.org/protobuf v1.36.11
+	src.solsynth.dev/sosys/go v0.1.0
 )
 
 require (

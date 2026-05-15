@@ -11,9 +11,9 @@ import (
 	"sync"
 	"time"
 
-	"git.solsynth.dev/sosys/blade/internal/logging"
-	dyauth "git.solsynth.dev/sosys/blade/pkg/auth"
-	gen "git.solsynth.dev/sosys/spec/gen/go"
+	"srv.solsynth.dev/sosys/blade/internal/logging"
+	dyauth "src.solsynth.dev/sosys/go/pkg/auth"
+	gen "src.solsynth.dev/sosys/go/proto"
 	"github.com/google/uuid"
 	"golang.org/x/net/websocket"
 )

@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	gen "git.solsynth.dev/sosys/spec/gen/go"
+	gen "src.solsynth.dev/sosys/go/proto"
 	"github.com/nats-io/nats.go"
 )
 

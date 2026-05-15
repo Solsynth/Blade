@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	dyauth "git.solsynth.dev/sosys/blade/pkg/auth"
-	gen "git.solsynth.dev/sosys/spec/gen/go"
+	dyauth "src.solsynth.dev/sosys/go/pkg/auth"
+	gen "src.solsynth.dev/sosys/go/proto"
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )

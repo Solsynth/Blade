@@ -7,8 +7,8 @@ import (
 	"net/url"
 	"strings"
 
-	"git.solsynth.dev/sosys/blade/internal/config"
-	"git.solsynth.dev/sosys/blade/internal/logging"
+	"srv.solsynth.dev/sosys/blade/internal/config"
+	"srv.solsynth.dev/sosys/blade/internal/logging"
 	"github.com/gin-gonic/gin"
 )
 

@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"time"
 
-	"git.solsynth.dev/sosys/blade/internal/logging"
-	dyauth "git.solsynth.dev/sosys/blade/pkg/auth"
+	"srv.solsynth.dev/sosys/blade/internal/logging"
+	dyauth "src.solsynth.dev/sosys/go/pkg/auth"
 	"github.com/gin-gonic/gin"
 	"golang.org/x/net/websocket"
 )

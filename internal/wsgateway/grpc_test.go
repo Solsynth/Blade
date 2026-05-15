@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	gen "git.solsynth.dev/sosys/spec/gen/go"
+	gen "src.solsynth.dev/sosys/go/proto"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
