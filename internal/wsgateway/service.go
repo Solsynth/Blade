@@ -259,7 +259,7 @@ func supportsSessionReauth(tokenInfo dyauth.TokenInfo) bool {
 	}
 
 	switch tokenInfo.Type {
-	case dyauth.TokenTypeAPIKeyJWT, dyauth.TokenTypeLegacyAPIKey:
+	case dyauth.TokenTypeApiKey:
 		return false
 	default:
 		return true

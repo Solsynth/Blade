@@ -196,7 +196,7 @@ func TestServiceReauthenticateConnection_RefreshesExpiry(t *testing.T) {
 		sessionID: "s1",
 		deviceID:  "d1",
 		expiresAt: time.Now().Add(-time.Minute).UTC(),
-		tokenInfo: dyauth.TokenInfo{Token: "token-1", Type: dyauth.TokenTypeUserJWT},
+		tokenInfo: dyauth.TokenInfo{Token: "token-1", Type: dyauth.TokenTypeAuthKey},
 		authReq:   &http.Request{Header: make(http.Header)},
 		done:      make(chan struct{}),
 	}
@@ -220,16 +220,10 @@ func TestServiceReauthenticateConnection_RefreshesExpiry(t *testing.T) {
 }
 
 func TestSupportsSessionReauth(t *testing.T) {
-	if !supportsSessionReauth(dyauth.TokenInfo{Token: "user-token", Type: dyauth.TokenTypeUserJWT}) {
-		t.Fatal("expected user jwt to support session reauth")
+	if !supportsSessionReauth(dyauth.TokenInfo{Token: "user-token", Type: dyauth.TokenTypeAuthKey}) {
+		t.Fatal("expected auth key to support session reauth")
 	}
-	if !supportsSessionReauth(dyauth.TokenInfo{Token: "legacy-user-token", Type: dyauth.TokenTypeLegacyUserToken}) {
-		t.Fatal("expected legacy user token to support session reauth")
-	}
-	if supportsSessionReauth(dyauth.TokenInfo{Token: "api-key-token", Type: dyauth.TokenTypeAPIKeyJWT}) {
-		t.Fatal("expected api key jwt to skip session reauth")
-	}
-	if supportsSessionReauth(dyauth.TokenInfo{Token: "legacy-api-key", Type: dyauth.TokenTypeLegacyAPIKey}) {
-		t.Fatal("expected legacy api key to skip session reauth")
+	if supportsSessionReauth(dyauth.TokenInfo{Token: "api-key-token", Type: dyauth.TokenTypeApiKey}) {
+		t.Fatal("expected api key to skip session reauth")
 	}
 }
