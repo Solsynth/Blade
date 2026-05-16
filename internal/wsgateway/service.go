@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"srv.solsynth.dev/sosys/blade/internal/logging"
+	"src.solsynth.dev/sosys/go/pkg/cache"
 	dyauth "src.solsynth.dev/sosys/go/pkg/auth"
 	gen "src.solsynth.dev/sosys/go/proto"
 	"github.com/google/uuid"
@@ -77,12 +78,14 @@ type Service struct {
 	forwarder     UnknownPacketForwarder
 	events        ConnectionEventPublisher
 	authenticator dyauth.TokenAuthenticator
+	cache         cache.CacheService
+	profiles      gen.DyProfileServiceClient
 
 	mu          sync.RWMutex
 	connections map[connectionKey]*wsConnection
 }
 
-func NewService(cfg Config, handlers []PacketHandler, forwarder UnknownPacketForwarder, events ConnectionEventPublisher, authenticator dyauth.TokenAuthenticator) *Service {
+func NewService(cfg Config, handlers []PacketHandler, forwarder UnknownPacketForwarder, events ConnectionEventPublisher, authenticator dyauth.TokenAuthenticator, c cache.CacheService, profiles gen.DyProfileServiceClient) *Service {
 	handlerMap := make(map[string]PacketHandler, len(handlers))
 	for _, h := range handlers {
 		handlerMap[h.PacketType()] = h
@@ -104,6 +107,8 @@ func NewService(cfg Config, handlers []PacketHandler, forwarder UnknownPacketFor
 		forwarder:     forwarder,
 		events:        events,
 		authenticator: authenticator,
+		cache:         c,
+		profiles:      profiles,
 		connections:   make(map[connectionKey]*wsConnection),
 	}
 }
@@ -285,6 +290,10 @@ func (s *Service) reauthenticateConnection(ctx context.Context, entry *wsConnect
 	}
 
 	entry.updateSession(result.Account, result.Session)
+
+	// Hydrate profile and touch last-seen after reauthentication
+	_ = dyauth.HydrateAndTouch(ctx, s.cache, s.profiles, result)
+
 	logging.Log.Debug().
 		Str("accountId", result.Account.GetId()).
 		Str("deviceId", entry.deviceID).

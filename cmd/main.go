@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"net"
 	"net/http"
@@ -16,12 +17,16 @@ import (
 	"srv.solsynth.dev/sosys/blade/internal/logging"
 	"srv.solsynth.dev/sosys/blade/internal/proxy"
 	"srv.solsynth.dev/sosys/blade/internal/wsgateway"
+	"src.solsynth.dev/sosys/go/pkg/cache"
 	dyauth "src.solsynth.dev/sosys/go/pkg/auth"
 	gen "src.solsynth.dev/sosys/go/proto"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/nats-io/nats.go"
+	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/reflection"
 )
 
@@ -107,6 +112,47 @@ func main() {
 				Msg("Failed to initialize websocket token authenticator")
 		}
 
+		// Initialize cache service
+		var cacheSvc cache.CacheService
+		if cfg.Cache.RedisURL != "" {
+			opt, err := redis.ParseURL(cfg.Cache.RedisURL)
+			if err != nil {
+				logging.Log.Fatal().Err(err).Str("redisUrl", cfg.Cache.RedisURL).Msg("Failed to parse Redis URL")
+			}
+			redisClient := redis.NewClient(opt)
+			cacheSvc = cache.NewRedisCacheService(redisClient)
+			logging.Log.Info().Str("redisUrl", cfg.Cache.RedisURL).Msg("Using Redis cache for auth sessions")
+		} else {
+			cacheSvc = cache.NewMemoryCacheService(10000)
+			logging.Log.Info().Msg("Using in-memory LRU cache for auth sessions")
+		}
+
+		// Wrap authenticator with session caching
+		cachedAuth := dyauth.NewCachedTokenAuthenticator(authenticator, cacheSvc)
+
+		// Initialize profile service gRPC connection
+		profileService := cfg.WebSocket.ProfileService
+		profileGrpcTarget := config.GetServiceGrpc(profileService)
+		if profileGrpcTarget == "" {
+			logging.Log.Fatal().
+				Str("profileService", profileService).
+				Msg("WebSocket gateway enabled but profile service gRPC target is missing")
+		}
+
+		profileTarget, profileUseTLS := dyauth.NormalizeAuthGRPCTarget(profileGrpcTarget, cfg.WebSocket.ProfileUseTLS)
+		profileGrpcConn, err := grpc.Dial(profileTarget, grpc.WithTransportCredentials(
+			func() credentials.TransportCredentials {
+				if profileUseTLS {
+					return credentials.NewTLS(&tls.Config{InsecureSkipVerify: cfg.WebSocket.ProfileTLSSkipVerify})
+				}
+				return insecure.NewCredentials()
+			}(),
+		))
+		if err != nil {
+			logging.Log.Fatal().Err(err).Str("target", profileGrpcTarget).Msg("Failed to dial profile service")
+		}
+		profileClient := gen.NewDyProfileServiceClient(profileGrpcConn)
+
 		wsCfg := wsgateway.Config{
 			KeepAliveInterval: time.Duration(cfg.WebSocket.KeepAliveSeconds) * time.Second,
 			MaxMessageBytes:   cfg.WebSocket.MaxMessageBytes,
@@ -137,7 +183,7 @@ func main() {
 			logging.Log.Warn().Msg("NATS URL is empty; websocket unknown packet forwarding and connection events are disabled")
 		}
 
-		wsService = wsgateway.NewService(wsCfg, nil, forwarder, eventPublisher, authenticator)
+		wsService = wsgateway.NewService(wsCfg, nil, forwarder, eventPublisher, cachedAuth, cacheSvc, profileClient)
 		if natsConn != nil {
 			if _, err := wsgateway.SubscribeAuthSessionRevocations(natsConn, wsService); err != nil {
 				logging.Log.Fatal().Err(err).Msg("Failed to subscribe to auth session revocation events")
@@ -146,7 +192,7 @@ func main() {
 				Str("subject", wsgateway.AuthSessionRevokedSubject).
 				Msg("Subscribed to auth session revocation events")
 		}
-		wsHandler := wsgateway.NewHttpHandler(authenticator, wsService, wsCfg)
+		wsHandler := wsgateway.NewHttpHandler(cachedAuth, wsService, wsCfg, cacheSvc, profileClient)
 		r.GET(cfg.WebSocket.Path, wsHandler.Handle)
 
 		if isDebugMode {

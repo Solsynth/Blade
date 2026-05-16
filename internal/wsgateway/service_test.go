@@ -24,7 +24,7 @@ func (s *stubTokenAuthenticator) Authenticate(_ context.Context, tokenInfo dyaut
 }
 
 func TestServiceNormalizeDeviceID_UsesProvidedValue(t *testing.T) {
-	svc := NewService(Config{}, nil, nil, nil, nil)
+	svc := NewService(Config{}, nil, nil, nil, nil, nil, nil)
 
 	got := svc.normalizeDeviceID("  device-123  ")
 	if got != "device-123" {
@@ -33,7 +33,7 @@ func TestServiceNormalizeDeviceID_UsesProvidedValue(t *testing.T) {
 }
 
 func TestServiceNormalizeDeviceID_GeneratesUUIDWhenMissing(t *testing.T) {
-	svc := NewService(Config{}, nil, nil, nil, nil)
+	svc := NewService(Config{}, nil, nil, nil, nil, nil, nil)
 
 	got := svc.normalizeDeviceID("   ")
 	if _, err := uuid.Parse(got); err != nil {
@@ -42,7 +42,7 @@ func TestServiceNormalizeDeviceID_GeneratesUUIDWhenMissing(t *testing.T) {
 }
 
 func TestServiceNormalizeDeviceID_GeneratesUUIDWithDeviceAltSuffix(t *testing.T) {
-	svc := NewService(Config{}, nil, nil, nil, nil)
+	svc := NewService(Config{}, nil, nil, nil, nil, nil, nil)
 
 	got := svc.normalizeDeviceID("+watch")
 	const suffix = "+watch"
@@ -57,7 +57,7 @@ func TestServiceNormalizeDeviceID_GeneratesUUIDWithDeviceAltSuffix(t *testing.T)
 }
 
 func TestServiceTryAddUniqueDevice_RejectsDuplicateDeviceID(t *testing.T) {
-	svc := NewService(Config{}, nil, nil, nil, nil)
+	svc := NewService(Config{}, nil, nil, nil, nil, nil, nil)
 	account1 := &gen.DyAccount{Id: "u1"}
 	account2 := &gen.DyAccount{Id: "u2"}
 
@@ -74,7 +74,7 @@ func TestServiceTryAddUniqueDevice_RejectsDuplicateDeviceID(t *testing.T) {
 }
 
 func TestServiceTryAddUniqueDevice_AcceptsDifferentDeviceID(t *testing.T) {
-	svc := NewService(Config{}, nil, nil, nil, nil)
+	svc := NewService(Config{}, nil, nil, nil, nil, nil, nil)
 	account1 := &gen.DyAccount{Id: "u1"}
 	account2 := &gen.DyAccount{Id: "u2"}
 
@@ -87,7 +87,7 @@ func TestServiceTryAddUniqueDevice_AcceptsDifferentDeviceID(t *testing.T) {
 }
 
 func TestServiceTryAddUniqueDevice_ReplacesStaleDuplicateDeviceID(t *testing.T) {
-	svc := NewService(Config{}, nil, nil, nil, nil)
+	svc := NewService(Config{}, nil, nil, nil, nil, nil, nil)
 	account1 := &gen.DyAccount{Id: "u1"}
 	account2 := &gen.DyAccount{Id: "u2"}
 
@@ -109,7 +109,7 @@ func TestServiceTryAddUniqueDevice_ReplacesStaleDuplicateDeviceID(t *testing.T) 
 }
 
 func TestServiceGetAccountConnections_ExcludesDeviceIDs(t *testing.T) {
-	svc := NewService(Config{}, nil, nil, nil, nil)
+	svc := NewService(Config{}, nil, nil, nil, nil, nil, nil)
 	svc.connections[connectionKey{accountID: "u1", deviceID: "d1"}] = &wsConnection{
 		account:  &gen.DyAccount{Id: "u1"},
 		deviceID: "d1",
@@ -133,7 +133,7 @@ func TestServiceGetAccountConnections_ExcludesDeviceIDs(t *testing.T) {
 }
 
 func TestServiceDisconnectSession_MatchesSessionID(t *testing.T) {
-	svc := NewService(Config{}, nil, nil, nil, nil)
+	svc := NewService(Config{}, nil, nil, nil, nil, nil, nil)
 	done := make(chan struct{})
 	svc.connections[connectionKey{accountID: "u1", deviceID: "d1"}] = &wsConnection{
 		account:   &gen.DyAccount{Id: "u1"},
@@ -158,7 +158,7 @@ func TestServiceDisconnectSession_MatchesSessionID(t *testing.T) {
 }
 
 func TestServiceDisconnectSession_FallsBackToAccountAndDevicePrefix(t *testing.T) {
-	svc := NewService(Config{}, nil, nil, nil, nil)
+	svc := NewService(Config{}, nil, nil, nil, nil, nil, nil)
 	done := make(chan struct{})
 	svc.connections[connectionKey{accountID: "u1", deviceID: "device-1+watch"}] = &wsConnection{
 		account:  &gen.DyAccount{Id: "u1"},
@@ -190,7 +190,7 @@ func TestServiceReauthenticateConnection_RefreshesExpiry(t *testing.T) {
 			},
 		},
 	}
-	svc := NewService(Config{}, nil, nil, nil, authenticator)
+	svc := NewService(Config{}, nil, nil, nil, authenticator, nil, nil)
 	entry := &wsConnection{
 		account:   &gen.DyAccount{Id: "u1"},
 		sessionID: "s1",

@@ -27,7 +27,7 @@ func (f *testForwarder) Forward(_ context.Context, account *gen.DyAccount, devic
 
 func TestServiceHandlePacket_ForwardsEndpointPacket(t *testing.T) {
 	fwd := &testForwarder{}
-	svc := NewService(Config{}, nil, fwd, nil, nil)
+	svc := NewService(Config{}, nil, fwd, nil, nil, nil, nil)
 
 	var pkt Packet
 	raw := []byte(`{"type":"messages.test","endpoint":"messager","data":{"hello":"world"}}`)

@@ -35,6 +35,7 @@ type ServicesConfig map[string]ServiceEndpoint
 
 type CacheConfig struct {
 	Serializer string `mapstructure:"serializer"`
+	RedisURL   string `mapstructure:"redisUrl"`
 }
 
 type NatsConfig struct {
@@ -65,6 +66,10 @@ type WebSocketConfig struct {
 	AuthUseTLS          bool     `mapstructure:"authUseTLS"`
 	AuthTLSSkipVerify   bool     `mapstructure:"authTlsSkipVerify"`
 	AuthTLSServerName   string   `mapstructure:"authTlsServerName"`
+	ProfileService      string   `mapstructure:"profileService"`
+	ProfileUseTLS       bool     `mapstructure:"profileUseTLS"`
+	ProfileTLSSkipVerify bool   `mapstructure:"profileTlsSkipVerify"`
+	ProfileTLSServerName string   `mapstructure:"profileTlsServerName"`
 	KeepAliveSeconds    int      `mapstructure:"keepAliveSeconds"`
 	MaxMessageBytes     int64    `mapstructure:"maxMessageBytes"`
 	AllowedDeviceAltern []string `mapstructure:"allowedDeviceAlternatives"`
@@ -100,12 +105,19 @@ func Load(configPath string) (*Config, error) {
 	viper.SetDefault("grpc.port", "7001")
 	viper.SetDefault("siteUrl", "http://localhost:3000")
 
+	viper.SetDefault("cache.serializer", "JSON")
+	viper.SetDefault("cache.redisUrl", "")
+
 	viper.SetDefault("websocket.enabled", true)
 	viper.SetDefault("websocket.path", "/ws")
 	viper.SetDefault("websocket.authService", "pass")
 	viper.SetDefault("websocket.authUseTLS", false)
 	viper.SetDefault("websocket.authTlsSkipVerify", false)
 	viper.SetDefault("websocket.authTlsServerName", "")
+	viper.SetDefault("websocket.profileService", "pass")
+	viper.SetDefault("websocket.profileUseTLS", false)
+	viper.SetDefault("websocket.profileTlsSkipVerify", false)
+	viper.SetDefault("websocket.profileTlsServerName", "")
 	viper.SetDefault("websocket.keepAliveSeconds", 60)
 	viper.SetDefault("websocket.maxMessageBytes", 4096)
 	viper.SetDefault("websocket.allowedDeviceAlternatives", []string{"watch"})

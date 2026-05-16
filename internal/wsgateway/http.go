@@ -6,7 +6,9 @@ import (
 	"time"
 
 	"srv.solsynth.dev/sosys/blade/internal/logging"
+	"src.solsynth.dev/sosys/go/pkg/cache"
 	dyauth "src.solsynth.dev/sosys/go/pkg/auth"
+	gen "src.solsynth.dev/sosys/go/proto"
 	"github.com/gin-gonic/gin"
 	"golang.org/x/net/websocket"
 )
@@ -15,9 +17,11 @@ type HttpHandler struct {
 	authenticator dyauth.TokenAuthenticator
 	service       *Service
 	cfg           Config
+	cache         cache.CacheService
+	profiles      gen.DyProfileServiceClient
 }
 
-func NewHttpHandler(authenticator dyauth.TokenAuthenticator, service *Service, cfg Config) *HttpHandler {
+func NewHttpHandler(authenticator dyauth.TokenAuthenticator, service *Service, cfg Config, c cache.CacheService, profiles gen.DyProfileServiceClient) *HttpHandler {
 	if cfg.KeepAliveInterval <= 0 {
 		cfg.KeepAliveInterval = 60 * time.Second
 	}
@@ -26,6 +30,8 @@ func NewHttpHandler(authenticator dyauth.TokenAuthenticator, service *Service, c
 		authenticator: authenticator,
 		service:       service,
 		cfg:           cfg,
+		cache:         c,
+		profiles:      profiles,
 	}
 }
 
@@ -59,6 +65,9 @@ func (h *HttpHandler) Handle(c *gin.Context) {
 		return
 	}
 	tokenInfo, _ := dyauth.ExtractToken(c.Request)
+
+	// Hydrate profile and touch last-seen (best-effort)
+	_ = dyauth.HydrateAndTouch(c.Request.Context(), h.cache, h.profiles, auth)
 
 	deviceID := auth.Session.GetClientId()
 	if deviceAlt != "" {
