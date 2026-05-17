@@ -13,7 +13,7 @@ require (
 	golang.org/x/net v0.48.0
 	google.golang.org/grpc v1.79.1
 	google.golang.org/protobuf v1.36.11
-	src.solsynth.dev/sosys/go v0.2.1-0.20260516165412-62ed09498942
+	src.solsynth.dev/sosys/go v0.2.1-0.20260517060917-e78fb28b4a68
 )
 
 replace src.solsynth.dev/sosys/go => /Users/littlesheep/Documents/Projects/DysonGo
