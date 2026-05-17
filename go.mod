@@ -16,8 +16,6 @@ require (
 	src.solsynth.dev/sosys/go v0.2.1-0.20260517060917-e78fb28b4a68
 )
 
-replace src.solsynth.dev/sosys/go => /Users/littlesheep/Documents/Projects/DysonGo
-
 require (
 	github.com/bytedance/sonic v1.13.3 // indirect
 	github.com/bytedance/sonic/loader v0.2.4 // indirect
