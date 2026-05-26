@@ -11,12 +11,12 @@ import (
 	"sync"
 	"time"
 
-	"srv.solsynth.dev/sosys/blade/internal/logging"
-	"src.solsynth.dev/sosys/go/pkg/cache"
-	dyauth "src.solsynth.dev/sosys/go/pkg/auth"
-	gen "src.solsynth.dev/sosys/go/proto"
 	"github.com/google/uuid"
 	"golang.org/x/net/websocket"
+	dyauth "src.solsynth.dev/sosys/go/pkg/auth"
+	"src.solsynth.dev/sosys/go/pkg/cache"
+	gen "src.solsynth.dev/sosys/go/proto"
+	"srv.solsynth.dev/sosys/blade/internal/logging"
 )
 
 type PacketHandler interface {
@@ -272,6 +272,10 @@ func supportsSessionReauth(tokenInfo dyauth.TokenInfo) bool {
 }
 
 func (s *Service) reauthenticateConnection(ctx context.Context, entry *wsConnection) error {
+	if entry.tokenInfo.Type == dyauth.TokenTypeApiKey {
+		// Skip reauthentication for API keys
+		return nil
+	}
 	authReq := dyauth.CloneRequestMetadata(entry.authReq)
 	result, err := dyauth.Reauthenticate(ctx, s.authenticator, entry.tokenInfo, authReq)
 	if err != nil {
