@@ -263,16 +263,24 @@ func supportsSessionReauth(tokenInfo dyauth.TokenInfo) bool {
 		return false
 	}
 
-	switch tokenInfo.Type {
-	case dyauth.TokenTypeApiKey:
+	switch {
+	case isAPIKeyTokenInfo(tokenInfo):
 		return false
 	default:
 		return true
 	}
 }
 
+func isAPIKeyTokenInfo(tokenInfo dyauth.TokenInfo) bool {
+	if tokenInfo.Type == dyauth.TokenTypeApiKey {
+		return true
+	}
+
+	return dyauth.IsApiKeyToken(strings.TrimSpace(tokenInfo.Token))
+}
+
 func (s *Service) reauthenticateConnection(ctx context.Context, entry *wsConnection) error {
-	if entry.tokenInfo.Type == dyauth.TokenTypeApiKey {
+	if isAPIKeyTokenInfo(entry.tokenInfo) {
 		// Skip reauthentication for API keys
 		return nil
 	}

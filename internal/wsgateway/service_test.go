@@ -226,4 +226,9 @@ func TestSupportsSessionReauth(t *testing.T) {
 	if supportsSessionReauth(dyauth.TokenInfo{Token: "api-key-token", Type: dyauth.TokenTypeApiKey}) {
 		t.Fatal("expected api key to skip session reauth")
 	}
+
+	queryAPIKeyToken := "header.eyJzdWIiOiI0MmQxYzM5OS1lOGM5LTQ5MjQtOWRmYy05NTkyMTZlYTZhYzUiLCJqdGkiOiI4NTliNzUwZi00MmZiLTQ3ZmMtODkzNy0yNGUwYmZjYzQyZGMiLCJzaWQiOiI4NTliNzUwZi00MmZiLTQ3ZmMtODkzNy0yNGUwYmZjYzQyZGMiLCJ0eXBlIjoiYXBpX2tleSIsImFwaV9rZXlfaWQiOiIzNzRjMGMwZi0yN2I1LTQ4MDYtYmM4MC01NTVkYzA3ZjdlNmEiLCJhY2NvdW50X2lkIjoiNDJkMWMzOTktZThjOS00OTI0LTlkZmMtOTU5MjE2ZWE2YWM1IiwidmVyIjoiMiIsImVwb2NoIjoiMCIsIm5iZiI6MTc3OTcyOTc1OCwiZXhwIjoxNzgyMzIxNzU4LCJpc3MiOiJzb2xhci1uZXR3b3JrIiwiYXVkIjoiaHR0cHM6Ly9zb2xpYW4uYXBwIn0.signature"
+	if supportsSessionReauth(dyauth.TokenInfo{Token: queryAPIKeyToken, Type: dyauth.TokenTypeAuthKey}) {
+		t.Fatal("expected API key JWT to skip session reauth even when extracted as auth key")
+	}
 }
