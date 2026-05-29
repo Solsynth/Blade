@@ -232,3 +232,32 @@ func TestSupportsSessionReauth(t *testing.T) {
 		t.Fatal("expected API key JWT to skip session reauth even when extracted as auth key")
 	}
 }
+
+func TestServiceTryAdd_APIKeyDisablesReauthAndExpiry(t *testing.T) {
+	svc := NewService(Config{}, nil, nil, nil, nil, nil, nil)
+	expiry := time.Now().Add(10 * time.Minute).UTC()
+	entry, _ := svc.TryAdd(SessionAuthContext{
+		Account: &gen.DyAccount{Id: "u1"},
+		Session: &gen.DyAuthSession{
+			Id:        "s1",
+			AccountId: "u1",
+			ExpiredAt: timestamppb.New(expiry),
+		},
+		TokenInfo: dyauth.TokenInfo{Token: "api-key-token", Type: dyauth.TokenTypeApiKey},
+	}, "d1", nil, nil)
+
+	if entry.supportsReauth() {
+		t.Fatal("expected api key connection to disable reauth")
+	}
+
+	if waitFor, ok := entry.nextReauthWait(); ok || waitFor != 0 {
+		t.Fatalf("expected api key connection to skip reauth wait, got wait=%v ok=%v", waitFor, ok)
+	}
+
+	entry.metaMu.RLock()
+	gotExpiry := entry.expiresAt
+	entry.metaMu.RUnlock()
+	if !gotExpiry.IsZero() {
+		t.Fatalf("expected api key connection expiry to be cleared, got %v", gotExpiry)
+	}
+}

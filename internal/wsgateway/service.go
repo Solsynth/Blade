@@ -56,6 +56,7 @@ type wsConnection struct {
 	sessionID string
 	deviceID  string
 	expiresAt time.Time
+	reauthOK  bool
 	tokenInfo dyauth.TokenInfo
 	authReq   *http.Request
 	conn      *websocket.Conn
@@ -116,11 +117,17 @@ func NewService(cfg Config, handlers []PacketHandler, forwarder UnknownPacketFor
 func (s *Service) TryAdd(auth SessionAuthContext, deviceID string, conn *websocket.Conn, cancel context.CancelFunc) (*wsConnection, *wsConnection) {
 	account := auth.Account
 	key := connectionKey{accountID: account.GetId(), deviceID: deviceID}
+	reauthOK := supportsSessionReauth(auth.TokenInfo)
+	expiresAt := timestampToTime(auth.Session.GetExpiredAt())
+	if !reauthOK {
+		expiresAt = time.Time{}
+	}
 	entry := &wsConnection{
 		account:   account,
 		sessionID: auth.Session.GetId(),
 		deviceID:  deviceID,
-		expiresAt: timestampToTime(auth.Session.GetExpiredAt()),
+		expiresAt: expiresAt,
+		reauthOK:  reauthOK,
 		tokenInfo: auth.TokenInfo,
 		authReq:   auth.Request,
 		conn:      conn,
@@ -223,7 +230,7 @@ func timestampToTime(ts interface{ AsTime() time.Time }) time.Time {
 }
 
 func (s *Service) startSessionMonitor(ctx context.Context, entry *wsConnection) {
-	if s.authenticator == nil || !supportsSessionReauth(entry.tokenInfo) {
+	if s.authenticator == nil || !entry.supportsReauth() {
 		return
 	}
 
@@ -715,9 +722,14 @@ func (c *wsConnection) nextReauthWait() (time.Duration, bool) {
 	}
 
 	c.metaMu.RLock()
+	reauthOK := c.reauthOK
 	expiresAt := c.expiresAt
 	done := c.done
 	c.metaMu.RUnlock()
+
+	if !reauthOK {
+		return 0, false
+	}
 
 	if done != nil {
 		select {
@@ -750,6 +762,16 @@ func (c *wsConnection) updateSession(account *gen.DyAccount, session *gen.DyAuth
 	c.sessionID = session.GetId()
 	c.expiresAt = timestampToTime(session.GetExpiredAt())
 	c.metaMu.Unlock()
+}
+
+func (c *wsConnection) supportsReauth() bool {
+	if c == nil {
+		return false
+	}
+
+	c.metaMu.RLock()
+	defer c.metaMu.RUnlock()
+	return c.reauthOK
 }
 
 func (c *wsConnection) isAlive() bool {
