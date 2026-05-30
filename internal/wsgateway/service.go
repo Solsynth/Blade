@@ -257,6 +257,7 @@ func (s *Service) startSessionMonitor(ctx context.Context, entry *wsConnection) 
 					Str("accountId", entry.getAccountID()).
 					Str("deviceId", entry.deviceID).
 					Str("sessionId", entry.getSessionID()).
+					Str("type", string(entry.tokenInfo.Type)).
 					Msg("Disconnecting websocket connection after session reauthentication failure")
 				s.Disconnect(entry.getAccountID(), entry.deviceID, "session expired; please reconnect")
 				return
@@ -305,7 +306,17 @@ func (s *Service) reauthenticateConnection(ctx context.Context, entry *wsConnect
 
 	newExpiry := timestampToTime(result.Session.GetExpiredAt())
 	if !newExpiry.IsZero() && !newExpiry.After(time.Now().UTC()) {
-		return errors.New("reauthenticated session is already expired")
+		if entry.tokenInfo.Type == dyauth.TokenTypeApiKey || result.Session.Type == gen.DySessionType_DY_API_KEY {
+			logging.Log.Debug().
+				Str("accountId", entry.getAccountID()).
+				Str("deviceId", entry.deviceID).
+				Str("sessionId", entry.getSessionID()).
+				Str("tokenType", string(entry.tokenInfo.Type)).
+				Int32("sessionType", int32(result.Session.Type.Number())).
+				Msg("Skip reauth session expiry validation due to it's API key")
+		} else {
+			return errors.New("reauthenticated session is already expired")
+		}
 	}
 
 	entry.updateSession(result.Account, result.Session)
