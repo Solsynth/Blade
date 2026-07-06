@@ -73,6 +73,8 @@ type ConnectionSnapshot struct {
 	DeviceID  string `json:"deviceId"`
 }
 
+var closeReasonFlushDelay = 50 * time.Millisecond
+
 type Service struct {
 	cfg           Config
 	handlers      map[string]PacketHandler
@@ -702,6 +704,7 @@ func (c *wsConnection) close(reason string) {
 		}
 		if reason != "" {
 			_ = c.sendJSON(Packet{Type: PacketTypeError, ErrorMessage: reason})
+			time.Sleep(closeReasonFlushDelay)
 		}
 		if c.conn != nil {
 			_ = c.conn.Close()
