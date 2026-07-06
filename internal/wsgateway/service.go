@@ -254,14 +254,16 @@ func (s *Service) startSessionMonitor(ctx context.Context, entry *wsConnection) 
 			}
 
 			if err := s.reauthenticateConnection(ctx, entry); err != nil {
+				reason := fmt.Sprintf("reauthentication failed: %v", err)
 				logging.Log.Warn().
 					Err(err).
 					Str("accountId", entry.getAccountID()).
 					Str("deviceId", entry.deviceID).
 					Str("sessionId", entry.getSessionID()).
 					Str("type", string(entry.tokenInfo.Type)).
+					Str("disconnectReason", reason).
 					Msg("Disconnecting websocket connection after session reauthentication failure")
-				s.Disconnect(entry.getAccountID(), entry.deviceID, "session expired; please reconnect")
+				s.Disconnect(entry.getAccountID(), entry.deviceID, reason)
 				return
 			}
 		}
