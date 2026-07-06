@@ -219,6 +219,40 @@ func TestServiceReauthenticateConnection_RefreshesExpiry(t *testing.T) {
 	}
 }
 
+func TestServiceReauthenticateConnection_IgnoresUnixEpochExpiry(t *testing.T) {
+	authenticator := &stubTokenAuthenticator{
+		result: &dyauth.AuthResult{
+			Account: &gen.DyAccount{Id: "u1"},
+			Session: &gen.DyAuthSession{
+				Id:        "s2",
+				AccountId: "u1",
+				ExpiredAt: timestamppb.New(time.Unix(0, 0).UTC()),
+			},
+		},
+	}
+	svc := NewService(Config{}, nil, nil, nil, authenticator, nil, nil)
+	entry := &wsConnection{
+		account:   &gen.DyAccount{Id: "u1"},
+		sessionID: "s1",
+		deviceID:  "d1",
+		expiresAt: time.Now().Add(time.Minute).UTC(),
+		tokenInfo: dyauth.TokenInfo{Token: "token-1", Type: dyauth.TokenTypeAuthKey},
+		authReq:   &http.Request{Header: make(http.Header)},
+		done:      make(chan struct{}),
+	}
+
+	if err := svc.reauthenticateConnection(context.Background(), entry); err != nil {
+		t.Fatalf("expected unix epoch expiry to be treated as unset, got %v", err)
+	}
+
+	entry.metaMu.RLock()
+	gotExpiry := entry.expiresAt
+	entry.metaMu.RUnlock()
+	if !gotExpiry.IsZero() {
+		t.Fatalf("expected expiry to be cleared for unix epoch sentinel, got %v", gotExpiry)
+	}
+}
+
 func TestSupportsSessionReauth(t *testing.T) {
 	if !supportsSessionReauth(dyauth.TokenInfo{Token: "user-token", Type: dyauth.TokenTypeAuthKey}) {
 		t.Fatal("expected auth key to support session reauth")

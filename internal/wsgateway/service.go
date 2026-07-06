@@ -228,7 +228,11 @@ func timestampToTime(ts interface{ AsTime() time.Time }) time.Time {
 	if ts == nil {
 		return time.Time{}
 	}
-	return ts.AsTime().UTC()
+	parsed := ts.AsTime().UTC()
+	if !parsed.After(time.Unix(0, 0).UTC()) {
+		return time.Time{}
+	}
+	return parsed
 }
 
 func (s *Service) startSessionMonitor(ctx context.Context, entry *wsConnection) {
