@@ -62,8 +62,9 @@ type wsConnection struct {
 	conn      *websocket.Conn
 	cancel    context.CancelFunc
 	done      chan struct{}
+	priority  chan Packet
+	outbound  chan Packet
 	closeOnce sync.Once
-	mu        sync.Mutex
 	metaMu    sync.RWMutex
 	probe     func() bool
 }
@@ -73,7 +74,17 @@ type ConnectionSnapshot struct {
 	DeviceID  string `json:"deviceId"`
 }
 
-var closeReasonFlushDelay = 50 * time.Millisecond
+const (
+	closeReasonFlushDelay = 50 * time.Millisecond
+	priorityQueueSize     = 16
+	outboundQueueSize     = 128
+	outboundWriteTimeout  = 5 * time.Second
+)
+
+var (
+	errWebSocketClosed   = errors.New("websocket connection is closed")
+	errOutboundQueueFull = errors.New("websocket outbound queue is full")
+)
 
 type Service struct {
 	cfg           Config
@@ -135,6 +146,8 @@ func (s *Service) TryAdd(auth SessionAuthContext, deviceID string, conn *websock
 		conn:      conn,
 		cancel:    cancel,
 		done:      make(chan struct{}),
+		priority:  make(chan Packet, priorityQueueSize),
+		outbound:  make(chan Packet, outboundQueueSize),
 	}
 
 	s.mu.Lock()
@@ -147,7 +160,14 @@ func (s *Service) TryAdd(auth SessionAuthContext, deviceID string, conn *websock
 
 func (s *Service) TryAddUniqueDevice(account *gen.DyAccount, deviceID string, conn *websocket.Conn) (*wsConnection, bool) {
 	key := connectionKey{accountID: account.GetId(), deviceID: deviceID}
-	entry := &wsConnection{account: account, deviceID: deviceID, conn: conn, done: make(chan struct{})}
+	entry := &wsConnection{
+		account:  account,
+		deviceID: deviceID,
+		conn:     conn,
+		done:     make(chan struct{}),
+		priority: make(chan Packet, priorityQueueSize),
+		outbound: make(chan Packet, outboundQueueSize),
+	}
 
 	s.mu.Lock()
 	for existingKey, existing := range s.connections {
@@ -528,7 +548,7 @@ func (s *Service) SendPacketToDevice(deviceID string, packet *gen.DyWebSocketPac
 			Str("deviceId", deviceID).
 			Str("packetType", packet.GetType()).
 			Msg("Sending websocket packet to device connection")
-		if err := entry.sendProto(packet); err != nil {
+		if err := entry.sendProtoPriority(packet); err != nil {
 			logging.Log.Warn().Err(err).Str("accountId", entry.getAccountID()).Str("deviceId", deviceID).Msg("Failed to send packet to device")
 		}
 	}
@@ -584,6 +604,7 @@ func (s *Service) HandleConnection(ctx context.Context, auth SessionAuthContext,
 		Msg("Handling websocket connection")
 
 	entry, old := s.TryAdd(auth, deviceID, conn, cancel)
+	entry.startWriter()
 	if old != nil {
 		logging.Log.Info().
 			Str("accountId", account.GetId()).
@@ -683,18 +704,99 @@ func (c *wsConnection) sendProto(packet *gen.DyWebSocketPacket) error {
 	return c.sendJSON(packetFromProto(packet))
 }
 
+func (c *wsConnection) sendProtoPriority(packet *gen.DyWebSocketPacket) error {
+	return c.sendJSONPriority(packetFromProto(packet))
+}
+
 func (c *wsConnection) sendJSON(packet Packet) error {
+	return c.enqueue(packet, c.outbound)
+}
+
+func (c *wsConnection) sendJSONPriority(packet Packet) error {
+	return c.enqueue(packet, c.priority)
+}
+
+func (c *wsConnection) enqueue(packet Packet, queue chan<- Packet) error {
 	if c.conn == nil {
 		return errors.New("websocket connection is nil")
 	}
+	if queue == nil {
+		return errors.New("websocket outbound queue is nil")
+	}
 
+	select {
+	case <-c.done:
+		return errWebSocketClosed
+	default:
+	}
+
+	select {
+	case queue <- packet:
+		return nil
+	default:
+		go c.close("websocket outbound queue is full")
+		return errOutboundQueueFull
+	}
+}
+
+func (c *wsConnection) startWriter() {
+	if c == nil || c.priority == nil || c.outbound == nil {
+		return
+	}
+
+	go func() {
+		for {
+			select {
+			case <-c.done:
+				return
+			case packet := <-c.priority:
+				if !c.writeQueuedPacket(packet) {
+					return
+				}
+			default:
+			}
+
+			select {
+			case <-c.done:
+				return
+			case packet := <-c.priority:
+				if !c.writeQueuedPacket(packet) {
+					return
+				}
+			case packet := <-c.outbound:
+				if !c.writeQueuedPacket(packet) {
+					return
+				}
+			}
+		}
+	}()
+}
+
+func (c *wsConnection) writeQueuedPacket(packet Packet) bool {
+	if err := c.writeJSON(packet); err != nil {
+		logging.Log.Warn().
+			Err(err).
+			Str("accountId", c.getAccountID()).
+			Str("deviceId", c.deviceID).
+			Msg("Closing websocket connection after write failure")
+		c.close("")
+		return false
+	}
+	return true
+}
+
+func (c *wsConnection) writeJSON(packet Packet) error {
 	payload, err := json.Marshal(packet)
 	if err != nil {
 		return err
 	}
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	if err := c.conn.SetWriteDeadline(time.Now().Add(outboundWriteTimeout)); err != nil {
+		return err
+	}
+	defer func() {
+		_ = c.conn.SetWriteDeadline(time.Time{})
+	}()
 
 	return websocket.Message.Send(c.conn, payload)
 }
