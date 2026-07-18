@@ -12,14 +12,6 @@ import (
 	"syscall"
 	"time"
 
-	"srv.solsynth.dev/sosys/blade/internal/config"
-	"srv.solsynth.dev/sosys/blade/internal/health"
-	"srv.solsynth.dev/sosys/blade/internal/logging"
-	"srv.solsynth.dev/sosys/blade/internal/proxy"
-	"srv.solsynth.dev/sosys/blade/internal/wsgateway"
-	"src.solsynth.dev/sosys/go/pkg/cache"
-	dyauth "src.solsynth.dev/sosys/go/pkg/auth"
-	gen "src.solsynth.dev/sosys/go/proto"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/nats-io/nats.go"
@@ -28,6 +20,15 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/reflection"
+	dyauth "src.solsynth.dev/sosys/go/pkg/auth"
+	"src.solsynth.dev/sosys/go/pkg/cache"
+	gen "src.solsynth.dev/sosys/go/proto"
+	"srv.solsynth.dev/sosys/blade/internal/config"
+	discovery "srv.solsynth.dev/sosys/blade/internal/discovery"
+	"srv.solsynth.dev/sosys/blade/internal/health"
+	"srv.solsynth.dev/sosys/blade/internal/logging"
+	"srv.solsynth.dev/sosys/blade/internal/proxy"
+	"srv.solsynth.dev/sosys/blade/internal/wsgateway"
 )
 
 const (
@@ -62,14 +63,36 @@ func main() {
 			Msg("Configured special route")
 	}
 
+	var redisClient *redis.Client
+	if cfg.Cache.RedisURL != "" {
+		opt, err := redis.ParseURL(cfg.Cache.RedisURL)
+		if err != nil {
+			logging.Log.Fatal().Err(err).Str("redisUrl", cfg.Cache.RedisURL).Msg("Failed to parse Redis URL")
+		}
+		redisClient = redis.NewClient(opt)
+	}
+
+	var registry *discovery.Registry
+	if cfg.Discovery.Enabled {
+		if redisClient == nil {
+			logging.Log.Fatal().Msg("Service discovery requires cache.redisUrl")
+		}
+		if strings.TrimSpace(cfg.Discovery.RegistrationToken) == "" {
+			logging.Log.Fatal().Msg("Service discovery requires discovery.registrationToken")
+		}
+		registry = discovery.NewRegistry(redisClient, cfg.Discovery.Prefix, time.Duration(cfg.Discovery.LeaseSeconds)*time.Second)
+		logging.Log.Info().Str("prefix", cfg.Discovery.Prefix).Msg("Enabled Redis-backed service discovery")
+	}
+
 	store := health.NewReadinessStore(cfg.Endpoints.CoreServiceNames)
-	aggregator := health.NewAggregator(store, cfg)
+	aggregator := health.NewAggregator(store, cfg, registry)
 
 	go aggregator.Start(context.Background())
 
-	proxyHandler := proxy.New(cfg)
+	proxyHandler := proxy.New(cfg, registry)
 	var wsService *wsgateway.Service
 	var natsConn *nats.Conn
+	var wsPushPublisher wsgateway.PushPublisher
 
 	r := gin.New()
 	r.Use(gin.Recovery())
@@ -114,12 +137,7 @@ func main() {
 
 		// Initialize cache service
 		var cacheSvc cache.CacheService
-		if cfg.Cache.RedisURL != "" {
-			opt, err := redis.ParseURL(cfg.Cache.RedisURL)
-			if err != nil {
-				logging.Log.Fatal().Err(err).Str("redisUrl", cfg.Cache.RedisURL).Msg("Failed to parse Redis URL")
-			}
-			redisClient := redis.NewClient(opt)
+		if redisClient != nil {
 			cacheSvc = cache.NewRedisCacheService(redisClient)
 			logging.Log.Info().Str("redisUrl", cfg.Cache.RedisURL).Msg("Using Redis cache for auth sessions")
 		} else {
@@ -175,6 +193,7 @@ func main() {
 			})
 			forwarder = natsForwarder
 			eventPublisher = natsForwarder
+			wsPushPublisher = wsgateway.NewNATSPushPublisher(natsConn, cfg.NATS.WebSocketSubjectPrefix)
 			logging.Log.Info().
 				Str("natsURL", natsURL).
 				Str("subjectPrefix", cfg.NATS.WebSocketSubjectPrefix).
@@ -184,7 +203,16 @@ func main() {
 		}
 
 		wsService = wsgateway.NewService(wsCfg, nil, forwarder, eventPublisher, cachedAuth, cacheSvc, profileClient)
+		if redisClient != nil {
+			wsService.SetPresence(wsgateway.NewRedisPresenceStore(redisClient, "", 2*time.Minute))
+			logging.Log.Info().Msg("Enabled Redis-backed websocket presence")
+		} else {
+			logging.Log.Warn().Msg("Redis is not configured; websocket presence remains local to each gateway replica")
+		}
 		if natsConn != nil {
+			if _, err := wsgateway.SubscribeWebSocketPushes(natsConn, cfg.NATS.WebSocketSubjectPrefix, wsService); err != nil {
+				logging.Log.Fatal().Err(err).Msg("Failed to subscribe to websocket push events")
+			}
 			if _, err := wsgateway.SubscribeAuthSessionRevocations(natsConn, wsService); err != nil {
 				logging.Log.Fatal().Err(err).Msg("Failed to subscribe to auth session revocation events")
 			}
@@ -302,7 +330,7 @@ func main() {
 	}()
 
 	var grpcSrv *grpc.Server
-	if cfg.GRPC.Enabled && wsService != nil {
+	if cfg.GRPC.Enabled && (wsService != nil || registry != nil) {
 		grpcAddr := ":" + cfg.GRPC.Port
 		lis, err := net.Listen("tcp", grpcAddr)
 		if err != nil {
@@ -310,7 +338,14 @@ func main() {
 		}
 
 		grpcSrv = grpc.NewServer()
-		gen.RegisterWebSocketServiceServer(grpcSrv, wsgateway.NewGRPCService(wsService))
+		if wsService != nil {
+			grpcWSService := wsgateway.NewGRPCService(wsService)
+			grpcWSService.SetPushPublisher(wsPushPublisher)
+			gen.RegisterWebSocketServiceServer(grpcSrv, grpcWSService)
+		}
+		if registry != nil {
+			gen.RegisterDyServiceDiscoveryServiceServer(grpcSrv, discovery.NewGRPCService(registry, cfg.Discovery.RegistrationToken))
+		}
 		reflection.Register(grpcSrv)
 
 		go func() {
@@ -348,6 +383,9 @@ func main() {
 	}
 	if natsConn != nil {
 		natsConn.Close()
+	}
+	if redisClient != nil {
+		_ = redisClient.Close()
 	}
 
 	logging.Log.Info().Msg("Server exited")

@@ -9,6 +9,7 @@ Because Solar Network is built by pure Go at the v2, and migrated to .NET at v3,
 
 - **Reverse Proxy Routing** - Routes requests to backend microservices
 - **Health Monitoring** - Background health checks every 10 seconds
+- **Service Discovery** - Redis-backed leased instance registry over gRPC
 - **Readiness Gating** - Returns 503 if core services are unhealthy
 - **CORS Support** - Allows all origins with custom headers
 - **Special Routes** - Fully configurable route system via `routes`
@@ -47,6 +48,13 @@ burstAllowance = 10
 
 [health]
 checkIntervalSeconds = 10
+
+[discovery]
+enabled = true
+prefix = "blade:discovery"
+leaseSeconds = 30
+leaderLeaseSeconds = 15
+registrationToken = "replace-with-a-service-secret"
 
 [server]
 port = "6000"
@@ -90,6 +98,19 @@ Legacy key `maintaince` is also supported for backward compatibility.
 | `CONFIG_PATH`    | Path to config file   | `configs/config.toml` |
 | `GIN_MODE`       | `debug` or `release`  | `debug`               |
 | `ZEROLOG_PRETTY` | Enable pretty logging | `false`               |
+
+### Service Discovery
+
+When `discovery.enabled` is set, Blade requires `cache.redisUrl` and a non-empty
+`discovery.registrationToken`. Services register an HTTP/gRPC endpoint through
+`DyServiceDiscoveryService/Register`, then renew the lease before it expires.
+Only the Redis-elected Blade replica probes registered HTTP endpoints; all
+replicas read the same healthy instance set for proxy routing. Send the service
+secret as `authorization: Bearer <registrationToken>` for registration, renewal,
+and deregistration calls.
+
+Configured `[services]` targets remain a fallback until that service has a
+registered instance, allowing incremental migration.
 
 ### Special Routes Configuration
 
@@ -154,6 +175,7 @@ docker run -p 6000:6000 -v ./config.toml:/app/configs/config.toml dyson-gateway
 | `/.well-known/*`        | .well-known endpoints (configurable via `routes`)                  |
 | `/activitypub/**`       | ActivityPub (configurable via `routes`)                            |
 | `/swagger/<service>/**` | Swagger docs → service                                             |
+| `gRPC DyServiceDiscoveryService` | Register, renew, remove, and resolve service instances             |
 
 ### WebSocket Authentication Notes
 

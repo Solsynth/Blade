@@ -33,6 +33,10 @@ type ConnectionEventPublisher interface {
 	PublishDisconnected(ctx context.Context, accountID string, deviceID string, isOffline bool) error
 }
 
+type accountPresenceLister interface {
+	ActiveAccountIDs(context.Context) ([]string, error)
+}
+
 type SessionAuthContext struct {
 	Account   *gen.DyAccount
 	Session   *gen.DyAuthSession
@@ -52,21 +56,22 @@ type connectionKey struct {
 }
 
 type wsConnection struct {
-	account   *gen.DyAccount
-	sessionID string
-	deviceID  string
-	expiresAt time.Time
-	reauthOK  bool
-	tokenInfo dyauth.TokenInfo
-	authReq   *http.Request
-	conn      *websocket.Conn
-	cancel    context.CancelFunc
-	done      chan struct{}
-	priority  chan Packet
-	outbound  chan Packet
-	closeOnce sync.Once
-	metaMu    sync.RWMutex
-	probe     func() bool
+	connectionID string
+	account      *gen.DyAccount
+	sessionID    string
+	deviceID     string
+	expiresAt    time.Time
+	reauthOK     bool
+	tokenInfo    dyauth.TokenInfo
+	authReq      *http.Request
+	conn         *websocket.Conn
+	cancel       context.CancelFunc
+	done         chan struct{}
+	priority     chan Packet
+	outbound     chan Packet
+	closeOnce    sync.Once
+	metaMu       sync.RWMutex
+	probe        func() bool
 }
 
 type ConnectionSnapshot struct {
@@ -94,10 +99,15 @@ type Service struct {
 	authenticator dyauth.TokenAuthenticator
 	cache         cache.CacheService
 	profiles      gen.DyProfileServiceClient
+	presence      PresenceStore
 
 	mu          sync.RWMutex
 	connections map[connectionKey]*wsConnection
 }
+
+// SetPresence enables shared connection status. It is optional so a gateway
+// can still run in a single-node development environment without Redis.
+func (s *Service) SetPresence(presence PresenceStore) { s.presence = presence }
 
 func NewService(cfg Config, handlers []PacketHandler, forwarder UnknownPacketForwarder, events ConnectionEventPublisher, authenticator dyauth.TokenAuthenticator, c cache.CacheService, profiles gen.DyProfileServiceClient) *Service {
 	handlerMap := make(map[string]PacketHandler, len(handlers))
@@ -136,18 +146,19 @@ func (s *Service) TryAdd(auth SessionAuthContext, deviceID string, conn *websock
 		expiresAt = time.Time{}
 	}
 	entry := &wsConnection{
-		account:   account,
-		sessionID: auth.Session.GetId(),
-		deviceID:  deviceID,
-		expiresAt: expiresAt,
-		reauthOK:  reauthOK,
-		tokenInfo: auth.TokenInfo,
-		authReq:   auth.Request,
-		conn:      conn,
-		cancel:    cancel,
-		done:      make(chan struct{}),
-		priority:  make(chan Packet, priorityQueueSize),
-		outbound:  make(chan Packet, outboundQueueSize),
+		connectionID: uuid.NewString(),
+		account:      account,
+		sessionID:    auth.Session.GetId(),
+		deviceID:     deviceID,
+		expiresAt:    expiresAt,
+		reauthOK:     reauthOK,
+		tokenInfo:    auth.TokenInfo,
+		authReq:      auth.Request,
+		conn:         conn,
+		cancel:       cancel,
+		done:         make(chan struct{}),
+		priority:     make(chan Packet, priorityQueueSize),
+		outbound:     make(chan Packet, outboundQueueSize),
 	}
 
 	s.mu.Lock()
@@ -161,12 +172,13 @@ func (s *Service) TryAdd(auth SessionAuthContext, deviceID string, conn *websock
 func (s *Service) TryAddUniqueDevice(account *gen.DyAccount, deviceID string, conn *websocket.Conn) (*wsConnection, bool) {
 	key := connectionKey{accountID: account.GetId(), deviceID: deviceID}
 	entry := &wsConnection{
-		account:  account,
-		deviceID: deviceID,
-		conn:     conn,
-		done:     make(chan struct{}),
-		priority: make(chan Packet, priorityQueueSize),
-		outbound: make(chan Packet, outboundQueueSize),
+		connectionID: uuid.NewString(),
+		account:      account,
+		deviceID:     deviceID,
+		conn:         conn,
+		done:         make(chan struct{}),
+		priority:     make(chan Packet, priorityQueueSize),
+		outbound:     make(chan Packet, outboundQueueSize),
 	}
 
 	s.mu.Lock()
@@ -294,6 +306,30 @@ func (s *Service) startSessionMonitor(ctx context.Context, entry *wsConnection) 
 	}()
 }
 
+func (s *Service) startPresenceMonitor(ctx context.Context, entry *wsConnection) {
+	if s.presence == nil {
+		return
+	}
+	interval := s.cfg.KeepAliveInterval
+	if interval <= 0 {
+		interval = time.Minute
+	}
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := s.presence.Refresh(ctx, entry.getAccountID(), entry.deviceID, entry.connectionID); err != nil {
+					logging.Log.Warn().Err(err).Str("accountId", entry.getAccountID()).Str("deviceId", entry.deviceID).Msg("Failed to refresh websocket presence")
+				}
+			}
+		}
+	}()
+}
+
 func supportsSessionReauth(tokenInfo dyauth.TokenInfo) bool {
 	if strings.TrimSpace(tokenInfo.Token) == "" {
 		return false
@@ -361,14 +397,23 @@ func (s *Service) reauthenticateConnection(ctx context.Context, entry *wsConnect
 	return nil
 }
 
-func (s *Service) remove(accountID, deviceID string) {
+func (s *Service) remove(accountID, deviceID string, expected *wsConnection) {
 	key := connectionKey{accountID: accountID, deviceID: deviceID}
 	s.mu.Lock()
-	delete(s.connections, key)
+	if current := s.connections[key]; expected == nil || current == expected {
+		delete(s.connections, key)
+	}
 	s.mu.Unlock()
 }
 
 func (s *Service) GetDeviceIsConnected(deviceID string) bool {
+	if s.presence != nil {
+		if connected, err := s.presence.DeviceConnected(context.Background(), deviceID); err == nil {
+			if connected {
+				return true
+			}
+		}
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -381,6 +426,13 @@ func (s *Service) GetDeviceIsConnected(deviceID string) bool {
 }
 
 func (s *Service) GetAccountIsConnected(accountID string) bool {
+	if s.presence != nil {
+		if connected, err := s.presence.AccountConnected(context.Background(), accountID); err == nil {
+			if connected {
+				return true
+			}
+		}
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -393,6 +445,11 @@ func (s *Service) GetAccountIsConnected(accountID string) bool {
 }
 
 func (s *Service) GetAllConnectedUserIDs() []string {
+	if lister, ok := s.presence.(accountPresenceLister); ok {
+		if accountIDs, err := lister.ActiveAccountIDs(context.Background()); err == nil {
+			return accountIDs
+		}
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -605,6 +662,13 @@ func (s *Service) HandleConnection(ctx context.Context, auth SessionAuthContext,
 
 	entry, old := s.TryAdd(auth, deviceID, conn, cancel)
 	entry.startWriter()
+	if s.presence != nil {
+		if err := s.presence.Register(connCtx, account.GetId(), deviceID, entry.connectionID); err != nil {
+			logging.Log.Warn().Err(err).Str("accountId", account.GetId()).Str("deviceId", deviceID).Msg("Failed to register websocket presence")
+		} else {
+			s.startPresenceMonitor(connCtx, entry)
+		}
+	}
 	if old != nil {
 		logging.Log.Info().
 			Str("accountId", account.GetId()).
@@ -623,7 +687,12 @@ func (s *Service) HandleConnection(ctx context.Context, auth SessionAuthContext,
 
 	defer func() {
 		cancel()
-		s.remove(account.GetId(), deviceID)
+		s.remove(account.GetId(), deviceID, entry)
+		if s.presence != nil {
+			if err := s.presence.Remove(context.Background(), account.GetId(), deviceID, entry.connectionID); err != nil {
+				logging.Log.Warn().Err(err).Str("accountId", account.GetId()).Str("deviceId", deviceID).Msg("Failed to remove websocket presence")
+			}
+		}
 		isOffline := !s.GetAccountIsConnected(account.GetId())
 		if s.events != nil {
 			if err := s.events.PublishDisconnected(connCtx, account.GetId(), deviceID, isOffline); err != nil {

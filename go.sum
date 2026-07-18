@@ -183,5 +183,5 @@ gopkg.in/yaml.v3 v3.0.0-20200313102051-9f266ea9e77c/go.mod h1:K4uyk7z7BCEPqu6E+C
 gopkg.in/yaml.v3 v3.0.1 h1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=
 gopkg.in/yaml.v3 v3.0.1/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
 nullprogram.com/x/optparse v1.0.0/go.mod h1:KdyPE+Igbe0jQUrVfMqDMeJQIJZEuyV7pjYmp6pbG50=
-src.solsynth.dev/sosys/go v0.2.1-0.20260517060917-e78fb28b4a68 h1:hYn7dExgY7FL1CtqoG69TCvTz/t9XMsoNuuz8dWQVSU=
-src.solsynth.dev/sosys/go v0.2.1-0.20260517060917-e78fb28b4a68/go.mod h1:obFYNjrUVgYLSHG30YlXUqFKvC+EejGTTuc7Aix8ugY=
+src.solsynth.dev/sosys/go v0.2.1-0.20260718133108-b1924c2a7262 h1:UKX1T1rL3Z+S2FIvGcCL4uvlwL5UFdRr3lGuyUfD0Xo=
+src.solsynth.dev/sosys/go v0.2.1-0.20260718133108-b1924c2a7262/go.mod h1:obFYNjrUVgYLSHG30YlXUqFKvC+EejGTTuc7Aix8ugY=

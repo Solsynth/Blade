@@ -4,33 +4,44 @@ import (
 	"context"
 	"strings"
 
-	gen "src.solsynth.dev/sosys/go/proto"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
+	gen "src.solsynth.dev/sosys/go/proto"
 )
 
 type GRPCService struct {
 	gen.UnimplementedWebSocketServiceServer
 	service *Service
+	pusher  PushPublisher
 }
+
+// SetPushPublisher keeps the gRPC API as an ingress path while distributing
+// pushes to every gateway replica through the message bus.
+func (s *GRPCService) SetPushPublisher(pusher PushPublisher) { s.pusher = pusher }
 
 func NewGRPCService(service *Service) *GRPCService {
 	return &GRPCService{service: service}
 }
 
-func (s *GRPCService) PushWebSocketPacket(_ context.Context, req *gen.DyPushWebSocketPacketRequest) (*emptypb.Empty, error) {
+func (s *GRPCService) PushWebSocketPacket(ctx context.Context, req *gen.DyPushWebSocketPacketRequest) (*emptypb.Empty, error) {
 	if req == nil || strings.TrimSpace(req.GetUserId()) == "" {
 		return nil, status.Error(codes.InvalidArgument, "user_id is required")
 	}
 	if req.GetPacket() == nil {
 		return nil, status.Error(codes.InvalidArgument, "packet is required")
 	}
-	s.service.SendPacketToAccountExcept(req.GetUserId(), req.GetPacket(), req.GetExcludedWebsocketDeviceIds())
+	if s.pusher != nil {
+		if err := s.pusher.PublishAccount(ctx, req.GetUserId(), req.GetPacket(), uniqueTrimmedStrings(req.GetExcludedWebsocketDeviceIds())); err != nil {
+			return nil, status.Errorf(codes.Unavailable, "publish websocket push: %v", err)
+		}
+	} else {
+		s.service.SendPacketToAccountExcept(req.GetUserId(), req.GetPacket(), req.GetExcludedWebsocketDeviceIds())
+	}
 	return &emptypb.Empty{}, nil
 }
 
-func (s *GRPCService) PushWebSocketPacketToUsers(_ context.Context, req *gen.DyPushWebSocketPacketToUsersRequest) (*emptypb.Empty, error) {
+func (s *GRPCService) PushWebSocketPacketToUsers(ctx context.Context, req *gen.DyPushWebSocketPacketToUsersRequest) (*emptypb.Empty, error) {
 	if req == nil || len(req.GetUserIds()) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "user_ids is required")
 	}
@@ -38,31 +49,50 @@ func (s *GRPCService) PushWebSocketPacketToUsers(_ context.Context, req *gen.DyP
 		return nil, status.Error(codes.InvalidArgument, "packet is required")
 	}
 	for _, userID := range uniqueTrimmedStrings(req.GetUserIds()) {
-		s.service.SendPacketToAccount(userID, req.GetPacket())
+		if s.pusher != nil {
+			if err := s.pusher.PublishAccount(ctx, userID, req.GetPacket(), nil); err != nil {
+				return nil, status.Errorf(codes.Unavailable, "publish websocket push: %v", err)
+			}
+		} else {
+			s.service.SendPacketToAccount(userID, req.GetPacket())
+		}
 	}
 	return &emptypb.Empty{}, nil
 }
 
-func (s *GRPCService) PushWebSocketPacketToDevice(_ context.Context, req *gen.DyPushWebSocketPacketToDeviceRequest) (*emptypb.Empty, error) {
+func (s *GRPCService) PushWebSocketPacketToDevice(ctx context.Context, req *gen.DyPushWebSocketPacketToDeviceRequest) (*emptypb.Empty, error) {
 	if req == nil || strings.TrimSpace(req.GetDeviceId()) == "" {
 		return nil, status.Error(codes.InvalidArgument, "device_id is required")
 	}
 	if req.GetPacket() == nil {
 		return nil, status.Error(codes.InvalidArgument, "packet is required")
 	}
-	s.service.SendPacketToDevice(req.GetDeviceId(), req.GetPacket())
+	if s.pusher != nil {
+		if err := s.pusher.PublishDevices(ctx, []string{req.GetDeviceId()}, req.GetPacket()); err != nil {
+			return nil, status.Errorf(codes.Unavailable, "publish websocket push: %v", err)
+		}
+	} else {
+		s.service.SendPacketToDevice(req.GetDeviceId(), req.GetPacket())
+	}
 	return &emptypb.Empty{}, nil
 }
 
-func (s *GRPCService) PushWebSocketPacketToDevices(_ context.Context, req *gen.DyPushWebSocketPacketToDevicesRequest) (*emptypb.Empty, error) {
+func (s *GRPCService) PushWebSocketPacketToDevices(ctx context.Context, req *gen.DyPushWebSocketPacketToDevicesRequest) (*emptypb.Empty, error) {
 	if req == nil || len(req.GetDeviceIds()) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "device_ids is required")
 	}
 	if req.GetPacket() == nil {
 		return nil, status.Error(codes.InvalidArgument, "packet is required")
 	}
-	for _, deviceID := range uniqueTrimmedStrings(req.GetDeviceIds()) {
-		s.service.SendPacketToDevice(deviceID, req.GetPacket())
+	deviceIDs := uniqueTrimmedStrings(req.GetDeviceIds())
+	if s.pusher != nil {
+		if err := s.pusher.PublishDevices(ctx, deviceIDs, req.GetPacket()); err != nil {
+			return nil, status.Errorf(codes.Unavailable, "publish websocket push: %v", err)
+		}
+	} else {
+		for _, deviceID := range deviceIDs {
+			s.service.SendPacketToDevice(deviceID, req.GetPacket())
+		}
 	}
 	return &emptypb.Empty{}, nil
 }

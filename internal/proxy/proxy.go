@@ -7,9 +7,10 @@ import (
 	"net/url"
 	"strings"
 
-	"srv.solsynth.dev/sosys/blade/internal/config"
-	"srv.solsynth.dev/sosys/blade/internal/logging"
 	"github.com/gin-gonic/gin"
+	"srv.solsynth.dev/sosys/blade/internal/config"
+	discovery "srv.solsynth.dev/sosys/blade/internal/discovery"
+	"srv.solsynth.dev/sosys/blade/internal/logging"
 )
 
 type Proxy struct {
@@ -17,9 +18,10 @@ type Proxy struct {
 	routes      []config.RouteRule
 	maintenance config.MaintenanceConfig
 	blockedSet  map[string]struct{}
+	registry    *discovery.Registry
 }
 
-func New(cfg *config.Config) *Proxy {
+func New(cfg *config.Config, registries ...*discovery.Registry) *Proxy {
 	serviceURLs := make(map[string]string)
 	for _, name := range cfg.Endpoints.ServiceNames {
 		url := config.GetServiceHttp(name)
@@ -28,12 +30,16 @@ func New(cfg *config.Config) *Proxy {
 		}
 	}
 
-	return &Proxy{
+	p := &Proxy{
 		serviceURLs: serviceURLs,
 		routes:      cfg.Routes,
 		maintenance: cfg.Maintenance,
 		blockedSet:  toServiceSet(cfg.Maintenance.Services),
 	}
+	if len(registries) > 0 {
+		p.registry = registries[0]
+	}
+	return p
 }
 
 func (p *Proxy) Handler() gin.HandlerFunc {
@@ -158,7 +164,7 @@ func (p *Proxy) respondMaintenanceBlocked(c *gin.Context, serviceName string) {
 }
 
 func (p *Proxy) handleSpecialRoute(c *gin.Context, route config.RouteRule) {
-	baseURL := p.serviceURLs[route.Service]
+	baseURL := p.serviceURL(c, route.Service)
 	if baseURL == "" {
 		c.JSON(http.StatusServiceUnavailable, gin.H{
 			"error": "service not available",
@@ -179,7 +185,7 @@ func (p *Proxy) handleSpecialRoute(c *gin.Context, route config.RouteRule) {
 }
 
 func (p *Proxy) handleProxy(c *gin.Context, serviceName string, pathOverride string) {
-	baseURL := p.serviceURLs[serviceName]
+	baseURL := p.serviceURL(c, serviceName)
 	if baseURL == "" {
 		c.JSON(http.StatusServiceUnavailable, gin.H{
 			"error": "service not available",
@@ -199,7 +205,7 @@ func (p *Proxy) handleProxy(c *gin.Context, serviceName string, pathOverride str
 }
 
 func (p *Proxy) handleProxyWithPath(c *gin.Context, serviceName string, newPath string) {
-	baseURL := p.serviceURLs[serviceName]
+	baseURL := p.serviceURL(c, serviceName)
 	if baseURL == "" {
 		c.JSON(http.StatusServiceUnavailable, gin.H{
 			"error": "service not available",
@@ -210,6 +216,24 @@ func (p *Proxy) handleProxyWithPath(c *gin.Context, serviceName string, newPath 
 
 	target := baseURL + newPath
 	p.proxyRequest(c, target)
+}
+
+// serviceURL prefers a healthy registered instance and keeps the configured
+// target as a migration-safe fallback for services not yet self-registering.
+func (p *Proxy) serviceURL(c *gin.Context, serviceName string) string {
+	if p.registry != nil {
+		instances, err := p.registry.List(c.Request.Context(), serviceName)
+		if err == nil && len(instances) > 0 {
+			if endpoint, ok := p.registry.ResolveHTTP(c.Request.Context(), serviceName); ok {
+				return endpoint
+			}
+			// A service that has registered owns its routing state. Do not send
+			// traffic back to a static endpoint while all registered instances
+			// are unhealthy.
+			return ""
+		}
+	}
+	return p.serviceURLs[serviceName]
 }
 
 func (p *Proxy) proxyRequest(c *gin.Context, target string) {

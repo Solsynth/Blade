@@ -3,6 +3,16 @@ siteUrl = "http://localhost:5173"
 [cache]
 serializer = "JSON"
 
+# Redis-backed service discovery. Services register their own leased instances
+# through Blade's gRPC endpoint. Set registrationToken before enabling outside
+# local development.
+[discovery]
+enabled = false
+prefix = "blade:discovery"
+leaseSeconds = 30
+leaderLeaseSeconds = 15
+registrationToken = ""
+
 [nats]
 url = "nats://nats:RE0zx7Qtady3Akyrn6eZXF@localhost:57132"
 websocketSubjectPrefix = "websocket_"

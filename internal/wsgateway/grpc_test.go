@@ -5,10 +5,49 @@ import (
 	"reflect"
 	"testing"
 
-	gen "src.solsynth.dev/sosys/go/proto"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	gen "src.solsynth.dev/sosys/go/proto"
 )
+
+type recordingPushPublisher struct {
+	accountID string
+	deviceIDs []string
+	packet    *gen.DyWebSocketPacket
+	excluded  []string
+}
+
+func (p *recordingPushPublisher) PublishAccount(_ context.Context, accountID string, packet *gen.DyWebSocketPacket, excluded []string) error {
+	p.accountID, p.packet, p.excluded = accountID, packet, excluded
+	return nil
+}
+
+func (p *recordingPushPublisher) PublishDevices(_ context.Context, deviceIDs []string, packet *gen.DyWebSocketPacket) error {
+	p.deviceIDs, p.packet = deviceIDs, packet
+	return nil
+}
+
+func TestGRPCService_PushWebSocketPacketPublishesWhenConfigured(t *testing.T) {
+	publisher := &recordingPushPublisher{}
+	server := NewGRPCService(NewService(Config{}, nil, nil, nil, nil, nil, nil))
+	server.SetPushPublisher(publisher)
+	packet := &gen.DyWebSocketPacket{Type: "event"}
+
+	_, err := server.PushWebSocketPacket(context.Background(), &gen.DyPushWebSocketPacketRequest{
+		UserId:                     "u1",
+		Packet:                     packet,
+		ExcludedWebsocketDeviceIds: []string{" d1 ", "d1"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if publisher.accountID != "u1" || publisher.packet != packet {
+		t.Fatalf("unexpected publisher call: %#v", publisher)
+	}
+	if !reflect.DeepEqual(publisher.excluded, []string{"d1"}) {
+		t.Fatalf("unexpected exclusions: %#v", publisher.excluded)
+	}
+}
 
 func TestGRPCService_GetWebsocketConnectionStatus(t *testing.T) {
 	svc := NewService(Config{}, nil, nil, nil, nil, nil, nil)

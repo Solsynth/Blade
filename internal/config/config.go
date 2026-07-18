@@ -11,6 +11,7 @@ type Config struct {
 	Endpoints   EndpointsConfig   `mapstructure:"endpoints"`
 	Services    ServicesConfig    `mapstructure:"services"`
 	Cache       CacheConfig       `mapstructure:"cache"`
+	Discovery   DiscoveryConfig   `mapstructure:"discovery"`
 	NATS        NatsConfig        `mapstructure:"nats"`
 	Health      HealthConfig      `mapstructure:"health"`
 	Server      ServerConfig      `mapstructure:"server"`
@@ -38,6 +39,16 @@ type CacheConfig struct {
 	RedisURL   string `mapstructure:"redisUrl"`
 }
 
+// DiscoveryConfig enables Blade's Redis-backed, leased service registry.
+// Registration calls require RegistrationToken when the registry is enabled.
+type DiscoveryConfig struct {
+	Enabled            bool   `mapstructure:"enabled"`
+	Prefix             string `mapstructure:"prefix"`
+	LeaseSeconds       int    `mapstructure:"leaseSeconds"`
+	LeaderLeaseSeconds int    `mapstructure:"leaderLeaseSeconds"`
+	RegistrationToken  string `mapstructure:"registrationToken"`
+}
+
 type NatsConfig struct {
 	URL                    string `mapstructure:"url"`
 	WebSocketSubjectPrefix string `mapstructure:"websocketSubjectPrefix"`
@@ -60,19 +71,19 @@ type GrpcServerConfig struct {
 }
 
 type WebSocketConfig struct {
-	Enabled             bool     `mapstructure:"enabled"`
-	Path                string   `mapstructure:"path"`
-	AuthService         string   `mapstructure:"authService"`
-	AuthUseTLS          bool     `mapstructure:"authUseTLS"`
-	AuthTLSSkipVerify   bool     `mapstructure:"authTlsSkipVerify"`
-	AuthTLSServerName   string   `mapstructure:"authTlsServerName"`
-	ProfileService      string   `mapstructure:"profileService"`
-	ProfileUseTLS       bool     `mapstructure:"profileUseTLS"`
-	ProfileTLSSkipVerify bool   `mapstructure:"profileTlsSkipVerify"`
+	Enabled              bool     `mapstructure:"enabled"`
+	Path                 string   `mapstructure:"path"`
+	AuthService          string   `mapstructure:"authService"`
+	AuthUseTLS           bool     `mapstructure:"authUseTLS"`
+	AuthTLSSkipVerify    bool     `mapstructure:"authTlsSkipVerify"`
+	AuthTLSServerName    string   `mapstructure:"authTlsServerName"`
+	ProfileService       string   `mapstructure:"profileService"`
+	ProfileUseTLS        bool     `mapstructure:"profileUseTLS"`
+	ProfileTLSSkipVerify bool     `mapstructure:"profileTlsSkipVerify"`
 	ProfileTLSServerName string   `mapstructure:"profileTlsServerName"`
-	KeepAliveSeconds    int      `mapstructure:"keepAliveSeconds"`
-	MaxMessageBytes     int64    `mapstructure:"maxMessageBytes"`
-	AllowedDeviceAltern []string `mapstructure:"allowedDeviceAlternatives"`
+	KeepAliveSeconds     int      `mapstructure:"keepAliveSeconds"`
+	MaxMessageBytes      int64    `mapstructure:"maxMessageBytes"`
+	AllowedDeviceAltern  []string `mapstructure:"allowedDeviceAlternatives"`
 }
 
 type RouteRule struct {
@@ -107,6 +118,11 @@ func Load(configPath string) (*Config, error) {
 
 	viper.SetDefault("cache.serializer", "JSON")
 	viper.SetDefault("cache.redisUrl", "")
+	viper.SetDefault("discovery.enabled", false)
+	viper.SetDefault("discovery.prefix", "blade:discovery")
+	viper.SetDefault("discovery.leaseSeconds", 30)
+	viper.SetDefault("discovery.leaderLeaseSeconds", 15)
+	viper.SetDefault("discovery.registrationToken", "")
 
 	viper.SetDefault("websocket.enabled", true)
 	viper.SetDefault("websocket.path", "/ws")

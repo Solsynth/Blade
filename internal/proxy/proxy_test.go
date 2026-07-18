@@ -5,12 +5,37 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"srv.solsynth.dev/sosys/blade/internal/config"
 	"github.com/gin-gonic/gin"
+	gen "src.solsynth.dev/sosys/go/proto"
+	"srv.solsynth.dev/sosys/blade/internal/config"
+	discovery "srv.solsynth.dev/sosys/blade/internal/discovery"
 )
 
 type closeNotifyRecorder struct {
 	*httptest.ResponseRecorder
+}
+
+func TestProxy_RegisteredUnhealthyInstanceDoesNotFallBackToStaticTarget(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	registry := discovery.NewRegistry(nil, "test:discovery", 0)
+	if _, _, err := registry.Register(t.Context(), &gen.DyServiceInstance{
+		Service: "sphere", InstanceId: "sphere-1", HttpEndpoint: "http://unhealthy.example",
+	}, 0); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	p := &Proxy{
+		serviceURLs: map[string]string{"sphere": "http://static.example"},
+		registry:    registry,
+	}
+	r := gin.New()
+	r.NoRoute(p.Handler())
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sphere/feed", nil))
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 for an unhealthy registered service, got %d", rec.Code)
+	}
 }
 
 func (r *closeNotifyRecorder) CloseNotify() <-chan bool {
