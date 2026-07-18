@@ -75,7 +75,7 @@ func (p *Proxy) Handler() gin.HandlerFunc {
 			parts := strings.SplitN(path[1:], "/", 3)
 			if len(parts) >= 2 {
 				serviceName := parts[1]
-				if _, ok := p.serviceURLs[serviceName]; ok {
+				if p.hasService(c, serviceName) {
 					if p.isServiceBlocked(serviceName) {
 						p.respondMaintenanceBlocked(c, serviceName)
 						return
@@ -91,7 +91,7 @@ func (p *Proxy) Handler() gin.HandlerFunc {
 		parts := strings.SplitN(path[1:], "/", 2)
 		if len(parts) > 0 {
 			serviceName := parts[0]
-			if _, ok := p.serviceURLs[serviceName]; ok {
+			if p.hasService(c, serviceName) {
 				if p.isServiceBlocked(serviceName) {
 					p.respondMaintenanceBlocked(c, serviceName)
 					return
@@ -112,6 +112,20 @@ func (p *Proxy) Handler() gin.HandlerFunc {
 			"code":  "ROUTE_NOT_FOUND",
 		})
 	}
+}
+
+// hasService admits both statically configured services and services that
+// exist only in the discovery registry. This lets a newly registered service
+// become routable without a Blade configuration deployment.
+func (p *Proxy) hasService(c *gin.Context, serviceName string) bool {
+	if _, ok := p.serviceURLs[serviceName]; ok {
+		return true
+	}
+	if p.registry == nil {
+		return false
+	}
+	instances, err := p.registry.List(c.Request.Context(), serviceName)
+	return err == nil && len(instances) > 0
 }
 
 func toServiceSet(services []string) map[string]struct{} {

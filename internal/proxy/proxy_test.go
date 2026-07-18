@@ -38,6 +38,40 @@ func TestProxy_RegisteredUnhealthyInstanceDoesNotFallBackToStaticTarget(t *testi
 	}
 }
 
+func TestProxy_DiscoveredServiceWithoutLocalConfiguration(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	var gotPath string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+
+	registry := discovery.NewRegistry(nil, "test:discovery", 0)
+	if _, _, err := registry.Register(t.Context(), &gen.DyServiceInstance{
+		Service: "personality", InstanceId: "personality-1", HttpEndpoint: upstream.URL,
+	}, 0); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	if err := registry.SetHealth(t.Context(), "personality", "personality-1", true); err != nil {
+		t.Fatalf("SetHealth() error = %v", err)
+	}
+
+	p := &Proxy{serviceURLs: map[string]string{}, registry: registry}
+	r := gin.New()
+	r.NoRoute(p.Handler())
+	rec := &closeNotifyRecorder{ResponseRecorder: httptest.NewRecorder()}
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/personality/conversations", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected discovered service response 200, got %d", rec.Code)
+	}
+	if gotPath != "/api/conversations" {
+		t.Fatalf("expected discovered upstream path /api/conversations, got %q", gotPath)
+	}
+}
+
 func (r *closeNotifyRecorder) CloseNotify() <-chan bool {
 	ch := make(chan bool, 1)
 	return ch
