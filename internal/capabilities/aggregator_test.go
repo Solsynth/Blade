@@ -2,6 +2,7 @@ package capabilities
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -59,5 +60,28 @@ func TestAggregatorRefreshSkipsUnhealthyInstances(t *testing.T) {
 	aggregator.Refresh(t.Context())
 	if aggregator.Document().Services["drive"].State != "degraded" {
 		t.Fatalf("expected degraded service, got %+v", aggregator.Document())
+	}
+}
+
+func TestDocumentUsesSnakeCaseJSON(t *testing.T) {
+	payload, err := json.Marshal(Document{
+		APIRevision:     17,
+		MinimumRevision: 16,
+		Services: map[string]ServiceMetadata{
+			"ring": {APIRevision: 17, MinimumRevision: 16},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	var document map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &document); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if _, ok := document["api_revision"]; !ok {
+		t.Fatalf("expected api_revision in %s", payload)
+	}
+	if _, ok := document["apiRevision"]; ok {
+		t.Fatalf("unexpected camel-case API revision in %s", payload)
 	}
 }

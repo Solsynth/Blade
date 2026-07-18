@@ -6,9 +6,9 @@ import (
 )
 
 type ServiceState struct {
-	ServiceName string
-	IsHealthy   bool
-	LastChecked time.Time
+	ServiceName string    `json:"service_name"`
+	IsHealthy   bool      `json:"is_healthy"`
+	LastChecked time.Time `json:"last_checked"`
 }
 
 type ReadinessStore struct {

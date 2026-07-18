@@ -2,6 +2,7 @@ package capabilities
 
 import (
 	"context"
+	"crypto/tls"
 	"net/url"
 	"sort"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/types/known/emptypb"
 	gen "src.solsynth.dev/sosys/go/proto"
@@ -32,15 +34,15 @@ type CapabilityState struct {
 }
 
 type ServiceMetadata struct {
-	APIRevision     uint32                     `json:"apiRevision"`
-	MinimumRevision uint32                     `json:"minimumRevision"`
+	APIRevision     uint32                     `json:"api_revision"`
+	MinimumRevision uint32                     `json:"minimum_revision"`
 	Capabilities    map[string]CapabilityState `json:"capabilities"`
 	State           string                     `json:"state"`
 }
 
 type Document struct {
-	APIRevision     uint32                     `json:"apiRevision"`
-	MinimumRevision uint32                     `json:"minimumRevision"`
+	APIRevision     uint32                     `json:"api_revision"`
+	MinimumRevision uint32                     `json:"minimum_revision"`
 	Features        map[string]bool            `json:"features"`
 	Capabilities    map[string]CapabilityState `json:"capabilities"`
 	Services        map[string]ServiceMetadata `json:"services"`
@@ -57,7 +59,13 @@ type Aggregator struct {
 }
 
 func New(source ServiceSource) *Aggregator {
-	return NewWithFetch(source, fetchCapabilities)
+	return NewWithTLSConfig(source, false)
+}
+
+func NewWithTLSConfig(source ServiceSource, tlsSkipVerify bool) *Aggregator {
+	return NewWithFetch(source, func(ctx context.Context, endpoint string) (*gen.DyCapabilitiesResponse, error) {
+		return fetchCapabilities(ctx, endpoint, tlsSkipVerify)
+	})
 }
 
 func NewWithFetch(source ServiceSource, fetch Fetch) *Aggregator {
@@ -120,14 +128,21 @@ func (a *Aggregator) Document() Document {
 	return cloneDocument(a.document)
 }
 
-func fetchCapabilities(ctx context.Context, endpoint string) (*gen.DyCapabilitiesResponse, error) {
+func fetchCapabilities(ctx context.Context, endpoint string, tlsSkipVerify bool) (*gen.DyCapabilitiesResponse, error) {
 	target := endpoint
+	transportCredentials := credentials.NewTLS(&tls.Config{
+		MinVersion:         tls.VersionTLS12,
+		InsecureSkipVerify: tlsSkipVerify,
+	})
 	if parsed, err := url.Parse(endpoint); err == nil && parsed.Host != "" {
 		target = parsed.Host
+		if parsed.Scheme == "http" {
+			transportCredentials = insecure.NewCredentials()
+		}
 	}
 	callCtx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
-	conn, err := grpc.DialContext(callCtx, target, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock())
+	conn, err := grpc.DialContext(callCtx, target, grpc.WithTransportCredentials(transportCredentials), grpc.WithBlock())
 	if err != nil {
 		return nil, err
 	}

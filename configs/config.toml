@@ -59,6 +59,7 @@ writeTimeout = 60
 [grpc]
 enabled = true
 port = "7001"
+clientTlsSkipVerify = false
 
 [websocket]
 enabled = true

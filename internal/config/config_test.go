@@ -122,6 +122,9 @@ prefix = "test:discovery"
 leaseSeconds = 45
 leaderLeaseSeconds = 20
 registrationToken = "service-secret"
+
+[grpc]
+clientTlsSkipVerify = true
 `
 	tmpPath := filepath.Join(t.TempDir(), "discovery.toml")
 	if err := os.WriteFile(tmpPath, []byte(toml), 0644); err != nil {
@@ -132,7 +135,7 @@ registrationToken = "service-secret"
 	if err != nil {
 		t.Fatalf("failed to load config: %v", err)
 	}
-	if !cfg.Discovery.Enabled || cfg.Discovery.Prefix != "test:discovery" || cfg.Discovery.LeaseSeconds != 45 || cfg.Discovery.LeaderLeaseSeconds != 20 || cfg.Discovery.RegistrationToken != "service-secret" {
+	if !cfg.Discovery.Enabled || cfg.Discovery.Prefix != "test:discovery" || cfg.Discovery.LeaseSeconds != 45 || cfg.Discovery.LeaderLeaseSeconds != 20 || cfg.Discovery.RegistrationToken != "service-secret" || !cfg.GRPC.ClientTLSSkipVerify {
 		t.Fatalf("unexpected discovery config: %+v", cfg.Discovery)
 	}
 }

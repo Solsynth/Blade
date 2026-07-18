@@ -83,7 +83,7 @@ func main() {
 			logging.Log.Fatal().Msg("Service discovery requires discovery.registrationToken")
 		}
 		registry = discovery.NewRegistry(redisClient, cfg.Discovery.Prefix, time.Duration(cfg.Discovery.LeaseSeconds)*time.Second)
-		capabilityAggregator = capabilities.New(registry)
+		capabilityAggregator = capabilities.NewWithTLSConfig(registry, cfg.GRPC.ClientTLSSkipVerify)
 		logging.Log.Info().Str("prefix", cfg.Discovery.Prefix).Msg("Enabled Redis-backed service discovery")
 	}
 

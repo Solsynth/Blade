@@ -66,8 +66,9 @@ type ServerConfig struct {
 }
 
 type GrpcServerConfig struct {
-	Enabled bool   `mapstructure:"enabled"`
-	Port    string `mapstructure:"port"`
+	Enabled             bool   `mapstructure:"enabled"`
+	Port                string `mapstructure:"port"`
+	ClientTLSSkipVerify bool   `mapstructure:"clientTlsSkipVerify"`
 }
 
 type WebSocketConfig struct {
@@ -114,6 +115,7 @@ func Load(configPath string) (*Config, error) {
 	viper.SetDefault("server.writeTimeout", 60*time.Second)
 	viper.SetDefault("grpc.enabled", true)
 	viper.SetDefault("grpc.port", "7001")
+	viper.SetDefault("grpc.clientTlsSkipVerify", false)
 	viper.SetDefault("siteUrl", "http://localhost:3000")
 
 	viper.SetDefault("cache.serializer", "JSON")
