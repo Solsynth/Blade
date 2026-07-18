@@ -233,6 +233,52 @@ func (r *Registry) List(ctx context.Context, service string) ([]*gen.DyServiceIn
 	return out, nil
 }
 
+func (r *Registry) ListServices(ctx context.Context) ([]string, error) {
+	if r.client == nil {
+		now := time.Now().UnixMilli()
+		services := make(map[string]struct{})
+		r.mu.Lock()
+		for key, record := range r.instances {
+			if record.ExpiresAt <= now {
+				delete(r.instances, key)
+				continue
+			}
+			services[record.Instance.GetService()] = struct{}{}
+		}
+		r.mu.Unlock()
+		return sortedServices(services), nil
+	}
+
+	services := make(map[string]struct{})
+	pattern := r.prefix + ":service:*"
+	var cursor uint64
+	for {
+		keys, next, err := r.client.Scan(ctx, cursor, pattern, 100).Result()
+		if err != nil {
+			return nil, err
+		}
+		for _, key := range keys {
+			service := strings.TrimPrefix(key, r.prefix+":service:")
+			if service != "" {
+				services[service] = struct{}{}
+			}
+		}
+		cursor = next
+		if cursor == 0 {
+			return sortedServices(services), nil
+		}
+	}
+}
+
+func sortedServices(services map[string]struct{}) []string {
+	out := make([]string, 0, len(services))
+	for service := range services {
+		out = append(out, service)
+	}
+	sort.Strings(out)
+	return out
+}
+
 func sortInstances(instances []*gen.DyServiceInstance) {
 	sort.Slice(instances, func(i, j int) bool { return instances[i].GetInstanceId() < instances[j].GetInstanceId() })
 }

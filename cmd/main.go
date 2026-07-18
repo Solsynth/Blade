@@ -23,6 +23,7 @@ import (
 	dyauth "src.solsynth.dev/sosys/go/pkg/auth"
 	"src.solsynth.dev/sosys/go/pkg/cache"
 	gen "src.solsynth.dev/sosys/go/proto"
+	"srv.solsynth.dev/sosys/blade/internal/capabilities"
 	"srv.solsynth.dev/sosys/blade/internal/config"
 	discovery "srv.solsynth.dev/sosys/blade/internal/discovery"
 	"srv.solsynth.dev/sosys/blade/internal/health"
@@ -73,6 +74,7 @@ func main() {
 	}
 
 	var registry *discovery.Registry
+	var capabilityAggregator *capabilities.Aggregator
 	if cfg.Discovery.Enabled {
 		if redisClient == nil {
 			logging.Log.Fatal().Msg("Service discovery requires cache.redisUrl")
@@ -81,6 +83,7 @@ func main() {
 			logging.Log.Fatal().Msg("Service discovery requires discovery.registrationToken")
 		}
 		registry = discovery.NewRegistry(redisClient, cfg.Discovery.Prefix, time.Duration(cfg.Discovery.LeaseSeconds)*time.Second)
+		capabilityAggregator = capabilities.New(registry)
 		logging.Log.Info().Str("prefix", cfg.Discovery.Prefix).Msg("Enabled Redis-backed service discovery")
 	}
 
@@ -88,6 +91,9 @@ func main() {
 	aggregator := health.NewAggregator(store, cfg, registry)
 
 	go aggregator.Start(context.Background())
+	if capabilityAggregator != nil {
+		go capabilityAggregator.Start(context.Background())
+	}
 
 	proxyHandler := proxy.New(cfg, registry)
 	var wsService *wsgateway.Service
@@ -284,6 +290,14 @@ func main() {
 
 	r.GET("/config/site", func(c *gin.Context) {
 		c.String(http.StatusOK, cfg.SiteURL)
+	})
+
+	r.GET("/meta", func(c *gin.Context) {
+		if capabilityAggregator == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "service discovery is disabled"})
+			return
+		}
+		c.JSON(http.StatusOK, capabilityAggregator.Document())
 	})
 
 	r.GET("/health", func(c *gin.Context) {

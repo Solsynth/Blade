@@ -13,7 +13,7 @@ require (
 	golang.org/x/net v0.48.0
 	google.golang.org/grpc v1.79.1
 	google.golang.org/protobuf v1.36.11
-	src.solsynth.dev/sosys/go v0.2.1-0.20260718133108-b1924c2a7262
+	src.solsynth.dev/sosys/go v0.2.1-0.20260718163051-863b7df1cdf1
 )
 
 require (
