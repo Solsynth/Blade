@@ -165,7 +165,7 @@ func responseMetadata(response *gen.DyCapabilitiesResponse) ServiceMetadata {
 		Capabilities:    make(map[string]CapabilityState),
 	}
 	for _, state := range response.GetCapabilities() {
-		name, ok := capabilityName(state.GetCapability())
+		name, ok := capabilityName(state)
 		if !ok {
 			continue
 		}
@@ -190,7 +190,12 @@ func merge(document *Document, metadata ServiceMetadata) {
 	}
 }
 
-func capabilityName(capability gen.DyCapability) (string, bool) {
+func capabilityName(state *gen.DyCapabilityState) (string, bool) {
+	if name := strings.TrimSpace(state.GetName()); name != "" {
+		return name, true
+	}
+
+	capability := state.GetCapability()
 	name, ok := gen.DyCapability_name[int32(capability)]
 	if !ok || capability == gen.DyCapability_DY_CAPABILITY_UNSPECIFIED {
 		return "", false

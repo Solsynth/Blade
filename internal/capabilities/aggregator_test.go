@@ -28,7 +28,7 @@ func TestAggregatorRefreshAggregatesHealthyServices(t *testing.T) {
 	}}, func(_ context.Context, endpoint string) (*gen.DyCapabilitiesResponse, error) {
 		switch endpoint {
 		case "drive:5001":
-			return &gen.DyCapabilitiesResponse{ApiRevision: 17, MinimumRevision: 16, Capabilities: []*gen.DyCapabilityState{{Capability: gen.DyCapability_DY_CAPABILITY_DRIVE_RESUMABLE, Enabled: true, Revision: 17, Version: "2"}}}, nil
+			return &gen.DyCapabilitiesResponse{ApiRevision: 17, MinimumRevision: 16, Capabilities: []*gen.DyCapabilityState{{Name: "drive.uploads", Enabled: true, Revision: 17, Version: "2"}}}, nil
 		case "ring:5001":
 			return &gen.DyCapabilitiesResponse{ApiRevision: 18, MinimumRevision: 17, Capabilities: []*gen.DyCapabilityState{{Capability: gen.DyCapability_DY_CAPABILITY_VOICE, Enabled: true, Revision: 18}}}, nil
 		default:
@@ -41,7 +41,7 @@ func TestAggregatorRefreshAggregatesHealthyServices(t *testing.T) {
 	if document.APIRevision != 18 || document.MinimumRevision != 17 {
 		t.Fatalf("unexpected revisions: %+v", document)
 	}
-	if !document.Features["voice"] || !document.Features["drive-resumable"] {
+	if !document.Features["voice"] || !document.Features["drive.uploads"] {
 		t.Fatalf("expected aggregated features, got %+v", document.Features)
 	}
 	if document.Services["drive"].State != "up" || document.Services["ring"].State != "up" {
