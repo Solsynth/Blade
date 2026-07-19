@@ -102,6 +102,25 @@ func TestGRPCService_GetWebsocketConnectionStatusBatch(t *testing.T) {
 	}
 }
 
+func TestGRPCService_GetConnectedWebsocketDeviceIds(t *testing.T) {
+	svc := NewService(Config{}, nil, nil, nil, nil, nil, nil)
+	svc.connections[connectionKey{accountID: "u1", deviceID: "d1"}] = &wsConnection{
+		account:  &gen.DyAccount{Id: "u1"},
+		deviceID: "d1",
+	}
+
+	server := NewGRPCService(svc)
+	resp, err := server.GetConnectedWebsocketDeviceIds(context.Background(), &gen.DyGetConnectedWebsocketDeviceIdsRequest{
+		DeviceIds: []string{"d2", "d1", "d1"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !reflect.DeepEqual(resp.GetDeviceIds(), []string{"d1"}) {
+		t.Fatalf("expected connected device [d1], got %#v", resp.GetDeviceIds())
+	}
+}
+
 func TestGRPCService_GetAllConnectedUserIds(t *testing.T) {
 	svc := NewService(Config{}, nil, nil, nil, nil, nil, nil)
 	svc.connections[connectionKey{accountID: "u2", deviceID: "d2"}] = &wsConnection{

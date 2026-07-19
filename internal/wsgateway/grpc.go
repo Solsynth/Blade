@@ -158,6 +158,16 @@ func (s *GRPCService) GetWebsocketConnectionStatusBatch(_ context.Context, req *
 	return &gen.DyGetWebsocketConnectionStatusBatchResponse{IsConnected: result}, nil
 }
 
+func (s *GRPCService) GetConnectedWebsocketDeviceIds(_ context.Context, req *gen.DyGetConnectedWebsocketDeviceIdsRequest) (*gen.DyGetConnectedWebsocketDeviceIdsResponse, error) {
+	if req == nil || len(req.GetDeviceIds()) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "device_ids is required")
+	}
+
+	return &gen.DyGetConnectedWebsocketDeviceIdsResponse{
+		DeviceIds: s.service.GetConnectedDeviceIDs(req.GetDeviceIds()),
+	}, nil
+}
+
 func (s *GRPCService) GetAllConnectedUserIds(_ context.Context, _ *emptypb.Empty) (*gen.DyGetAllConnectedUserIdsResponse, error) {
 	return &gen.DyGetAllConnectedUserIdsResponse{
 		UserIds: s.service.GetAllConnectedUserIDs(),

@@ -18,6 +18,7 @@ type PresenceStore interface {
 	Remove(context.Context, string, string, string) error
 	AccountConnected(context.Context, string) (bool, error)
 	DeviceConnected(context.Context, string) (bool, error)
+	DevicesConnected(context.Context, []string) (map[string]bool, error)
 }
 
 type RedisPresenceStore struct {
@@ -92,6 +93,36 @@ func (p *RedisPresenceStore) AccountConnected(ctx context.Context, accountID str
 
 func (p *RedisPresenceStore) DeviceConnected(ctx context.Context, deviceID string) (bool, error) {
 	return p.connected(ctx, p.deviceKey(deviceID))
+}
+
+func (p *RedisPresenceStore) DevicesConnected(ctx context.Context, deviceIDs []string) (map[string]bool, error) {
+	connected := make(map[string]bool, len(deviceIDs))
+	if p == nil || p.client == nil {
+		return connected, nil
+	}
+
+	now := time.Now().UnixMilli()
+	pipe := p.client.TxPipeline()
+	counts := make(map[string]*redis.IntCmd, len(deviceIDs))
+	for _, deviceID := range deviceIDs {
+		deviceID = strings.TrimSpace(deviceID)
+		if deviceID == "" {
+			continue
+		}
+		if _, exists := counts[deviceID]; exists {
+			continue
+		}
+		key := p.deviceKey(deviceID)
+		pipe.ZRemRangeByScore(ctx, key, "-inf", fmt.Sprintf("%d", now))
+		counts[deviceID] = pipe.ZCount(ctx, key, fmt.Sprintf("(%d", now), "+inf")
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		return nil, err
+	}
+	for deviceID, count := range counts {
+		connected[deviceID] = count.Val() > 0
+	}
+	return connected, nil
 }
 
 func (p *RedisPresenceStore) ActiveAccountIDs(ctx context.Context) ([]string, error) {

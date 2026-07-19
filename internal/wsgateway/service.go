@@ -425,6 +425,50 @@ func (s *Service) GetDeviceIsConnected(deviceID string) bool {
 	return false
 }
 
+func (s *Service) GetConnectedDeviceIDs(deviceIDs []string) []string {
+	uniqueDeviceIDs := make(map[string]struct{}, len(deviceIDs))
+	for _, deviceID := range deviceIDs {
+		deviceID = strings.TrimSpace(deviceID)
+		if deviceID != "" {
+			uniqueDeviceIDs[deviceID] = struct{}{}
+		}
+	}
+	if len(uniqueDeviceIDs) == 0 {
+		return nil
+	}
+
+	requestedDeviceIDs := make([]string, 0, len(uniqueDeviceIDs))
+	for deviceID := range uniqueDeviceIDs {
+		requestedDeviceIDs = append(requestedDeviceIDs, deviceID)
+	}
+	if s.presence != nil {
+		if connected, err := s.presence.DevicesConnected(context.Background(), requestedDeviceIDs); err == nil {
+			return connectedDeviceIDs(connected)
+		}
+	}
+
+	s.mu.RLock()
+	connected := make(map[string]bool, len(requestedDeviceIDs))
+	for _, conn := range s.connections {
+		if _, requested := uniqueDeviceIDs[conn.deviceID]; requested {
+			connected[conn.deviceID] = true
+		}
+	}
+	s.mu.RUnlock()
+	return connectedDeviceIDs(connected)
+}
+
+func connectedDeviceIDs(statuses map[string]bool) []string {
+	deviceIDs := make([]string, 0, len(statuses))
+	for deviceID, connected := range statuses {
+		if connected {
+			deviceIDs = append(deviceIDs, deviceID)
+		}
+	}
+	sort.Strings(deviceIDs)
+	return deviceIDs
+}
+
 func (s *Service) GetAccountIsConnected(accountID string) bool {
 	if s.presence != nil {
 		if connected, err := s.presence.AccountConnected(context.Background(), accountID); err == nil {
