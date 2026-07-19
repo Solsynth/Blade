@@ -38,6 +38,9 @@ func TestAggregatorRefreshAggregatesHealthyServices(t *testing.T) {
 
 	aggregator.Refresh(t.Context())
 	document := aggregator.Document()
+	if document.Incomplete {
+		t.Fatalf("expected complete document, got %+v", document)
+	}
 	if document.APIRevision != 18 || document.MinimumRevision != 17 {
 		t.Fatalf("unexpected revisions: %+v", document)
 	}
@@ -58,8 +61,18 @@ func TestAggregatorRefreshSkipsUnhealthyInstances(t *testing.T) {
 	})
 
 	aggregator.Refresh(t.Context())
-	if aggregator.Document().Services["drive"].State != "degraded" {
+	document := aggregator.Document()
+	if !document.Incomplete || document.Services["drive"].State != "degraded" {
 		t.Fatalf("expected degraded service, got %+v", aggregator.Document())
+	}
+}
+
+func TestDocumentIsInitiallyIncomplete(t *testing.T) {
+	aggregator := NewWithFetch(testSource{}, func(context.Context, string) (*gen.DyCapabilitiesResponse, error) {
+		return nil, nil
+	})
+	if !aggregator.Document().Incomplete {
+		t.Fatal("expected initial document to be incomplete")
 	}
 }
 
@@ -83,5 +96,8 @@ func TestDocumentUsesSnakeCaseJSON(t *testing.T) {
 	}
 	if _, ok := document["apiRevision"]; ok {
 		t.Fatalf("unexpected camel-case API revision in %s", payload)
+	}
+	if _, ok := document["incomplete"]; !ok {
+		t.Fatalf("expected incomplete in %s", payload)
 	}
 }

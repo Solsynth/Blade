@@ -43,6 +43,7 @@ type ServiceMetadata struct {
 type Document struct {
 	APIRevision     uint32                     `json:"api_revision"`
 	MinimumRevision uint32                     `json:"minimum_revision"`
+	Incomplete      bool                       `json:"incomplete"`
 	Features        map[string]bool            `json:"features"`
 	Capabilities    map[string]CapabilityState `json:"capabilities"`
 	Services        map[string]ServiceMetadata `json:"services"`
@@ -93,14 +94,17 @@ func (a *Aggregator) Refresh(ctx context.Context) {
 	}
 
 	document := emptyDocument()
+	document.Incomplete = len(services) == 0
 	for _, service := range services {
 		metadata := ServiceMetadata{Capabilities: make(map[string]CapabilityState), State: "degraded"}
 		document.Services[service] = metadata
 
 		instances, err := a.source.List(ctx, service)
 		if err != nil {
+			document.Incomplete = true
 			continue
 		}
+		available := false
 		for _, instance := range instances {
 			if !instance.GetHealthy() || instance.GetGrpcEndpoint() == "" {
 				continue
@@ -113,7 +117,11 @@ func (a *Aggregator) Refresh(ctx context.Context) {
 			metadata.State = "up"
 			document.Services[service] = metadata
 			merge(&document, metadata)
+			available = true
 			break
+		}
+		if !available {
+			document.Incomplete = true
 		}
 	}
 
@@ -152,6 +160,7 @@ func fetchCapabilities(ctx context.Context, endpoint string, tlsSkipVerify bool)
 
 func emptyDocument() Document {
 	return Document{
+		Incomplete:   true,
 		Features:     make(map[string]bool),
 		Capabilities: make(map[string]CapabilityState),
 		Services:     make(map[string]ServiceMetadata),
@@ -207,6 +216,7 @@ func cloneDocument(document Document) Document {
 	clone := emptyDocument()
 	clone.APIRevision = document.APIRevision
 	clone.MinimumRevision = document.MinimumRevision
+	clone.Incomplete = document.Incomplete
 	for name, enabled := range document.Features {
 		clone.Features[name] = enabled
 	}
