@@ -10,10 +10,13 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 	gen "src.solsynth.dev/sosys/go/proto"
+	discovery "srv.solsynth.dev/sosys/blade/internal/discovery"
 )
 
 const (
@@ -106,11 +109,16 @@ func (a *Aggregator) Refresh(ctx context.Context) {
 		}
 		available := false
 		for _, instance := range instances {
-			if !instance.GetHealthy() || instance.GetGrpcEndpoint() == "" {
+			grpcEndpoint := discovery.Endpoint(instance, "grpc")
+			if !instance.GetHealthy() || grpcEndpoint == "" {
 				continue
 			}
-			response, err := a.fetch(ctx, instance.GetGrpcEndpoint())
+			response, err := a.fetch(ctx, grpcEndpoint)
 			if err != nil {
+				if status.Code(err) == codes.Unimplemented {
+					available = true
+					break
+				}
 				continue
 			}
 			metadata = responseMetadata(response)

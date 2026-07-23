@@ -77,22 +77,56 @@ func normalizeInstance(instance *gen.DyServiceInstance) (*gen.DyServiceInstance,
 	copy.InstanceId = strings.TrimSpace(copy.GetInstanceId())
 	copy.HttpEndpoint = strings.TrimRight(strings.TrimSpace(copy.GetHttpEndpoint()), "/")
 	copy.GrpcEndpoint = strings.TrimSpace(copy.GetGrpcEndpoint())
+	endpoints := make(map[string]string, len(copy.GetEndpoints()))
+	for protocol, endpoint := range copy.GetEndpoints() {
+		protocol = strings.ToLower(strings.TrimSpace(protocol))
+		endpoint = strings.TrimSpace(endpoint)
+		if protocol == "" || endpoint == "" {
+			return nil, fmt.Errorf("endpoint protocol and value are required")
+		}
+		endpoints[protocol] = endpoint
+	}
+	if len(endpoints) > 0 {
+		copy.Endpoints = endpoints
+	}
 	if copy.Service == "" || copy.InstanceId == "" {
 		return nil, fmt.Errorf("service and instance_id are required")
 	}
-	if copy.HttpEndpoint == "" && copy.GrpcEndpoint == "" {
-		return nil, fmt.Errorf("an http_endpoint or grpc_endpoint is required")
+	if copy.HttpEndpoint == "" && copy.GrpcEndpoint == "" && len(copy.GetEndpoints()) == 0 {
+		return nil, fmt.Errorf("an endpoint is required")
 	}
-	if copy.HttpEndpoint != "" {
-		parsed, err := url.ParseRequestURI(copy.HttpEndpoint)
+	if httpEndpoint := Endpoint(copy, "http"); httpEndpoint != "" {
+		parsed, err := url.ParseRequestURI(httpEndpoint)
 		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-			return nil, fmt.Errorf("http_endpoint must be an absolute URL")
+			return nil, fmt.Errorf("http endpoint must be an absolute URL")
 		}
 	}
 	if copy.Weight < 1 {
 		copy.Weight = 1
 	}
 	return copy, nil
+}
+
+// Endpoint returns a registered endpoint by protocol. Map entries take
+// precedence over the legacy http_endpoint and grpc_endpoint fields.
+func Endpoint(instance *gen.DyServiceInstance, protocol string) string {
+	if instance == nil {
+		return ""
+	}
+	protocol = strings.ToLower(strings.TrimSpace(protocol))
+	for name, endpoint := range instance.GetEndpoints() {
+		if strings.EqualFold(strings.TrimSpace(name), protocol) {
+			return strings.TrimSpace(endpoint)
+		}
+	}
+	switch protocol {
+	case "http":
+		return strings.TrimSpace(instance.GetHttpEndpoint())
+	case "grpc":
+		return strings.TrimSpace(instance.GetGrpcEndpoint())
+	default:
+		return ""
+	}
 }
 
 // Register writes a new lease. New instances remain unhealthy until the
@@ -348,14 +382,14 @@ func (r *Registry) ResolveHTTP(ctx context.Context, service string) (string, boo
 	}
 	available := make([]*gen.DyServiceInstance, 0, len(instances))
 	for _, instance := range instances {
-		if instance.GetHealthy() && instance.GetHttpEndpoint() != "" {
+		if instance.GetHealthy() && Endpoint(instance, "http") != "" {
 			available = append(available, instance)
 		}
 	}
 	if len(available) == 0 {
 		return "", false
 	}
-	return available[r.rr.Add(1)%uint64(len(available))].GetHttpEndpoint(), true
+	return Endpoint(available[r.rr.Add(1)%uint64(len(available))], "http"), true
 }
 
 func (r *Registry) AcquireHealthLeadership(ctx context.Context, holder string, ttl time.Duration) (bool, error) {

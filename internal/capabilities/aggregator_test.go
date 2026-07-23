@@ -6,6 +6,8 @@ import (
 	"errors"
 	"testing"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	gen "src.solsynth.dev/sosys/go/proto"
 )
 
@@ -23,7 +25,7 @@ func (s testSource) List(_ context.Context, service string) ([]*gen.DyServiceIns
 
 func TestAggregatorRefreshAggregatesHealthyServices(t *testing.T) {
 	aggregator := NewWithFetch(testSource{instances: map[string][]*gen.DyServiceInstance{
-		"drive": {{Service: "drive", InstanceId: "drive-1", GrpcEndpoint: "drive:5001", Healthy: true}},
+		"drive": {{Service: "drive", InstanceId: "drive-1", Endpoints: map[string]string{"grpc": "drive:5001"}, Healthy: true}},
 		"ring":  {{Service: "ring", InstanceId: "ring-1", GrpcEndpoint: "ring:5001", Healthy: true}},
 	}}, func(_ context.Context, endpoint string) (*gen.DyCapabilitiesResponse, error) {
 		switch endpoint {
@@ -64,6 +66,27 @@ func TestAggregatorRefreshSkipsUnhealthyInstances(t *testing.T) {
 	document := aggregator.Document()
 	if !document.Incomplete || document.Services["drive"].State != "degraded" {
 		t.Fatalf("expected degraded service, got %+v", aggregator.Document())
+	}
+}
+
+func TestAggregatorRefreshIgnoresUnimplementedCapabilities(t *testing.T) {
+	aggregator := NewWithFetch(testSource{instances: map[string][]*gen.DyServiceInstance{
+		"drive": {{Service: "drive", InstanceId: "drive-1", GrpcEndpoint: "drive:5001", Healthy: true}},
+		"ring":  {{Service: "ring", InstanceId: "ring-1", GrpcEndpoint: "ring:5001", Healthy: true}},
+	}}, func(_ context.Context, endpoint string) (*gen.DyCapabilitiesResponse, error) {
+		if endpoint == "drive:5001" {
+			return nil, status.Error(codes.Unimplemented, "capabilities are not supported")
+		}
+		return &gen.DyCapabilitiesResponse{}, nil
+	})
+
+	aggregator.Refresh(t.Context())
+	document := aggregator.Document()
+	if document.Incomplete {
+		t.Fatalf("expected unimplemented capabilities to be ignored, got %+v", document)
+	}
+	if document.Services["drive"].State != "degraded" {
+		t.Fatalf("expected unsupported service metadata to remain degraded, got %+v", document.Services["drive"])
 	}
 }
 

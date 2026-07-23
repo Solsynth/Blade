@@ -37,22 +37,30 @@ values include a Kubernetes pod UID, Nomad allocation ID, or a process UUID
 generated during startup. Do not use only the service name: replicas would
 overwrite each other.
 
-Register both endpoints when the service provides both protocols:
+Register endpoints by protocol when the service provides them:
 
 ```text
-service:       sphere
-instance_id:   sphere-7f4d8b9c-pod-1
-http_endpoint: http://sphere-7f4d8b9c-pod-1:8000
-grpc_endpoint: sphere-7f4d8b9c-pod-1:7005
-weight:        1
+service:     sphere
+instance_id: sphere-7f4d8b9c-pod-1
+endpoints:
+  http: http://sphere-7f4d8b9c-pod-1:8000
+  grpc: sphere-7f4d8b9c-pod-1:7005
+  nats: nats://broker/sphere
+weight: 1
 ```
 
-`http_endpoint` must be an absolute URL. Blade actively probes
-`<http_endpoint>/health`; a newly registered instance is not routable until
+The `http` endpoint must be an absolute URL. Blade actively probes
+`<http endpoint>/health`; a newly registered instance is not routable until
 that check succeeds. A gRPC-only instance can be returned by `Resolve` with
 `healthy_only = false`, but it cannot currently become healthy through Blade's
 HTTP health checker. Give it an HTTP health endpoint until gRPC health probing
 is added.
+
+Blade uses the `http` and `grpc` map entries for its own proxying and
+capabilities requests. Other protocol keys are preserved and returned by
+`Resolve` for consumers that understand them. Legacy `http_endpoint` and
+`grpc_endpoint` fields remain supported, but corresponding map entries take
+precedence.
 
 ## Registration lifecycle
 
@@ -94,7 +102,10 @@ func register(ctx context.Context, bladeAddr, token, instanceID string) (gen.DyS
     _, err = client.Register(authenticated, &gen.DyRegisterServiceInstanceRequest{
         Instance: &gen.DyServiceInstance{
             Service: "sphere", InstanceId: instanceID,
-            HttpEndpoint: "http://sphere:8000", GrpcEndpoint: "sphere:7005",
+            Endpoints: map[string]string{
+                "http": "http://sphere:8000",
+                "grpc": "sphere:7005",
+            },
             Weight: 1,
         },
         LeaseSeconds: 30,

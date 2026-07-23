@@ -10,6 +10,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 	gen "src.solsynth.dev/sosys/go/proto"
+	"srv.solsynth.dev/sosys/blade/internal/logging"
 )
 
 // GRPCService exposes the shared discovery contract. Mutating calls require a
@@ -35,6 +36,13 @@ func (s *GRPCService) Register(ctx context.Context, req *gen.DyRegisterServiceIn
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
+	logging.Log.Info().
+		Str("service", instance.GetService()).
+		Str("instance", instance.GetInstanceId()).
+		Str("http_endpoint", Endpoint(instance, "http")).
+		Str("grpc_endpoint", Endpoint(instance, "grpc")).
+		Time("lease_expires_at", expiresAt).
+		Msg("Service instance registered")
 	return &gen.DyRegisterServiceInstanceResponse{Instance: instance, LeaseExpiresAtUnixMs: expiresAt.UnixMilli()}, nil
 }
 

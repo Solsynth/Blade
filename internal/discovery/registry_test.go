@@ -54,3 +54,33 @@ func TestRegistry_RenewPreservesHealth(t *testing.T) {
 		t.Fatal("renewing a healthy instance must keep it routable")
 	}
 }
+
+func TestRegistry_EndpointMapOverridesLegacyEndpoints(t *testing.T) {
+	registry := NewRegistry(nil, "test:discovery", time.Minute)
+	ctx := context.Background()
+	_, _, err := registry.Register(ctx, &gen.DyServiceInstance{
+		Service: "sphere", InstanceId: "sphere-1",
+		HttpEndpoint: "http://legacy:8000",
+		Endpoints: map[string]string{
+			"HTTP": "http://registered:8000",
+			"nats": "nats://broker/sphere",
+		},
+	}, time.Minute)
+	if err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	if err := registry.SetHealth(ctx, "sphere", "sphere-1", true); err != nil {
+		t.Fatalf("SetHealth() error = %v", err)
+	}
+	endpoint, ok := registry.ResolveHTTP(ctx, "sphere")
+	if !ok || endpoint != "http://registered:8000" {
+		t.Fatalf("ResolveHTTP() = %q, %v; want map endpoint", endpoint, ok)
+	}
+	instances, err := registry.List(ctx, "sphere")
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if Endpoint(instances[0], "nats") != "nats://broker/sphere" {
+		t.Fatalf("custom endpoint = %q", Endpoint(instances[0], "nats"))
+	}
+}
