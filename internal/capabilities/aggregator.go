@@ -55,8 +55,9 @@ type Document struct {
 type Fetch func(context.Context, string) (*gen.DyCapabilitiesResponse, error)
 
 type Aggregator struct {
-	source ServiceSource
-	fetch  Fetch
+	source       ServiceSource
+	fetch        Fetch
+	coreServices map[string]struct{}
 
 	mu       sync.RWMutex
 	document Document
@@ -66,14 +67,20 @@ func New(source ServiceSource) *Aggregator {
 	return NewWithTLSConfig(source, false)
 }
 
-func NewWithTLSConfig(source ServiceSource, tlsSkipVerify bool) *Aggregator {
+func NewWithTLSConfig(source ServiceSource, tlsSkipVerify bool, coreServices ...string) *Aggregator {
 	return NewWithFetch(source, func(ctx context.Context, endpoint string) (*gen.DyCapabilitiesResponse, error) {
 		return fetchCapabilities(ctx, endpoint, tlsSkipVerify)
-	})
+	}, coreServices...)
 }
 
-func NewWithFetch(source ServiceSource, fetch Fetch) *Aggregator {
-	return &Aggregator{source: source, fetch: fetch, document: emptyDocument()}
+func NewWithFetch(source ServiceSource, fetch Fetch, coreServices ...string) *Aggregator {
+	coreSet := make(map[string]struct{}, len(coreServices))
+	for _, service := range coreServices {
+		if service = strings.ToLower(strings.TrimSpace(service)); service != "" {
+			coreSet[service] = struct{}{}
+		}
+	}
+	return &Aggregator{source: source, fetch: fetch, coreServices: coreSet, document: emptyDocument()}
 }
 
 func (a *Aggregator) Start(ctx context.Context) {
@@ -97,14 +104,18 @@ func (a *Aggregator) Refresh(ctx context.Context) {
 	}
 
 	document := emptyDocument()
-	document.Incomplete = len(services) == 0
+	document.Incomplete = false
+	discovered := make(map[string]struct{}, len(services))
 	for _, service := range services {
+		discovered[strings.ToLower(strings.TrimSpace(service))] = struct{}{}
 		metadata := ServiceMetadata{Capabilities: make(map[string]CapabilityState), State: "degraded"}
 		document.Services[service] = metadata
 
 		instances, err := a.source.List(ctx, service)
 		if err != nil {
-			document.Incomplete = true
+			if a.isCoreService(service) {
+				document.Incomplete = true
+			}
 			continue
 		}
 		available := false
@@ -129,13 +140,27 @@ func (a *Aggregator) Refresh(ctx context.Context) {
 			break
 		}
 		if !available {
-			document.Incomplete = true
+			if a.isCoreService(service) {
+				document.Incomplete = true
+			}
 		}
+	}
+	for service := range a.coreServices {
+		if _, ok := discovered[service]; ok {
+			continue
+		}
+		document.Incomplete = true
+		document.Services[service] = ServiceMetadata{Capabilities: make(map[string]CapabilityState), State: "degraded"}
 	}
 
 	a.mu.Lock()
 	a.document = document
 	a.mu.Unlock()
+}
+
+func (a *Aggregator) isCoreService(service string) bool {
+	_, ok := a.coreServices[strings.ToLower(strings.TrimSpace(service))]
+	return ok
 }
 
 func (a *Aggregator) Document() Document {

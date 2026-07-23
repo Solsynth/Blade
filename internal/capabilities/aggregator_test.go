@@ -12,10 +12,14 @@ import (
 )
 
 type testSource struct {
+	services  []string
 	instances map[string][]*gen.DyServiceInstance
 }
 
 func (s testSource) ListServices(context.Context) ([]string, error) {
+	if s.services != nil {
+		return s.services, nil
+	}
 	return []string{"drive", "ring"}, nil
 }
 
@@ -36,7 +40,7 @@ func TestAggregatorRefreshAggregatesHealthyServices(t *testing.T) {
 		default:
 			return nil, errors.New("unexpected endpoint")
 		}
-	})
+	}, "drive")
 
 	aggregator.Refresh(t.Context())
 	document := aggregator.Document()
@@ -60,12 +64,46 @@ func TestAggregatorRefreshSkipsUnhealthyInstances(t *testing.T) {
 	}}, func(context.Context, string) (*gen.DyCapabilitiesResponse, error) {
 		t.Fatal("fetch must not be called for unhealthy instances")
 		return nil, nil
-	})
+	}, "drive")
 
 	aggregator.Refresh(t.Context())
 	document := aggregator.Document()
 	if !document.Incomplete || document.Services["drive"].State != "degraded" {
 		t.Fatalf("expected degraded service, got %+v", aggregator.Document())
+	}
+}
+
+func TestAggregatorRefreshIgnoresUnavailableNonCoreServices(t *testing.T) {
+	aggregator := NewWithFetch(testSource{instances: map[string][]*gen.DyServiceInstance{
+		"drive": {{Service: "drive", InstanceId: "drive-1", GrpcEndpoint: "drive:5001", Healthy: false}},
+		"ring":  {{Service: "ring", InstanceId: "ring-1", GrpcEndpoint: "ring:5001", Healthy: true}},
+	}}, func(_ context.Context, endpoint string) (*gen.DyCapabilitiesResponse, error) {
+		if endpoint != "ring:5001" {
+			t.Fatalf("unexpected endpoint %q", endpoint)
+		}
+		return &gen.DyCapabilitiesResponse{}, nil
+	}, "ring")
+
+	aggregator.Refresh(t.Context())
+	if aggregator.Document().Incomplete {
+		t.Fatalf("expected unavailable non-core service to be ignored, got %+v", aggregator.Document())
+	}
+}
+
+func TestAggregatorRefreshMarksMissingCoreServiceIncomplete(t *testing.T) {
+	aggregator := NewWithFetch(testSource{
+		services: []string{"ring"},
+		instances: map[string][]*gen.DyServiceInstance{
+			"ring": {{Service: "ring", InstanceId: "ring-1", GrpcEndpoint: "ring:5001", Healthy: true}},
+		},
+	}, func(context.Context, string) (*gen.DyCapabilitiesResponse, error) {
+		return &gen.DyCapabilitiesResponse{}, nil
+	}, "drive")
+
+	aggregator.Refresh(t.Context())
+	document := aggregator.Document()
+	if !document.Incomplete || document.Services["drive"].State != "degraded" {
+		t.Fatalf("expected missing core service to make document incomplete, got %+v", document)
 	}
 }
 
