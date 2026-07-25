@@ -40,12 +40,19 @@ func (h *HttpHandler) Handle(c *gin.Context) {
 	requestQuery := c.Request.URL.RawQuery
 	requestOrigin := c.Request.Header.Get("Origin")
 
+	namespace := c.Query("namespace")
+	if namespace == "" {
+		namespace = h.cfg.DefaultNamespace
+	}
+
 	deviceAlt := c.Query("deviceAlt")
 	if deviceAlt != "" {
-		if _, ok := h.cfg.AllowedDeviceAlt[deviceAlt]; !ok {
+		nsCfg := h.resolveNamespaceConfig(namespace)
+		if _, ok := nsCfg.AllowedDeviceAlt[deviceAlt]; !ok {
 			logging.Log.Warn().
 				Str("path", requestPath).
 				Str("origin", requestOrigin).
+				Str("namespace", namespace).
 				Str("deviceAlt", deviceAlt).
 				Msg("Rejected websocket request due to unsupported deviceAlt")
 			c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported deviceAlt"})
@@ -60,6 +67,7 @@ func (h *HttpHandler) Handle(c *gin.Context) {
 			Str("path", requestPath).
 			Str("query", requestQuery).
 			Str("origin", requestOrigin).
+			Str("namespace", namespace).
 			Msg("Rejected websocket request due to authentication failure")
 		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
 		return
@@ -82,6 +90,7 @@ func (h *HttpHandler) Handle(c *gin.Context) {
 					Err(err).
 					Str("path", requestPath).
 					Str("origin", requestOrigin).
+					Str("namespace", namespace).
 					Str("accountId", auth.Account.GetId()).
 					Str("deviceId", deviceID).
 					Msg("Rejected websocket handshake due to invalid origin")
@@ -91,6 +100,7 @@ func (h *HttpHandler) Handle(c *gin.Context) {
 		},
 		Handler: websocket.Handler(func(conn *websocket.Conn) {
 			logging.Log.Info().
+				Str("namespace", namespace).
 				Str("accountId", auth.Account.GetId()).
 				Str("deviceId", deviceID).
 				Str("sessionId", auth.Session.GetId()).
@@ -102,14 +112,35 @@ func (h *HttpHandler) Handle(c *gin.Context) {
 				Session:   auth.Session,
 				TokenInfo: tokenInfo,
 				Request:   dyauth.CloneRequestMetadata(c.Request),
-			}, deviceID, conn)
+			}, namespace, deviceID, conn)
 		}),
 	}
 
 	server.ServeHTTP(c.Writer, c.Request)
 
 	logging.Log.Debug().
+		Str("namespace", namespace).
 		Str("accountId", auth.Account.GetId()).
 		Str("deviceId", deviceID).
 		Msg("Websocket handler completed")
+}
+
+func (h *HttpHandler) resolveNamespaceConfig(namespace string) NamespaceConfig {
+	if ns, ok := h.cfg.Namespaces[namespace]; ok {
+		if ns.KeepAliveInterval <= 0 {
+			ns.KeepAliveInterval = h.cfg.KeepAliveInterval
+		}
+		if ns.MaxMessageBytes <= 0 {
+			ns.MaxMessageBytes = h.cfg.MaxMessageBytes
+		}
+		if ns.AllowedDeviceAlt == nil {
+			ns.AllowedDeviceAlt = h.cfg.AllowedDeviceAlt
+		}
+		return ns
+	}
+	return NamespaceConfig{
+		KeepAliveInterval: h.cfg.KeepAliveInterval,
+		MaxMessageBytes:   h.cfg.MaxMessageBytes,
+		AllowedDeviceAlt:  h.cfg.AllowedDeviceAlt,
+	}
 }

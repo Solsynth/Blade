@@ -14,12 +14,13 @@ import (
 const pushSubjectSuffix = "push"
 
 type PushPublisher interface {
-	PublishAccount(context.Context, string, *gen.DyWebSocketPacket, []string) error
-	PublishDevices(context.Context, []string, *gen.DyWebSocketPacket) error
+	PublishAccount(ctx context.Context, namespace, accountID string, packet *gen.DyWebSocketPacket, excluded []string) error
+	PublishDevices(ctx context.Context, namespace string, deviceIDs []string, packet *gen.DyWebSocketPacket) error
 }
 
 type natsPushEvent struct {
 	Target            string   `json:"target"`
+	Namespace         string   `json:"namespace"`
 	IDs               []string `json:"ids"`
 	ExcludedDeviceIDs []string `json:"excluded_device_ids,omitempty"`
 	Packet            []byte   `json:"packet"`
@@ -34,12 +35,12 @@ func NewNATSPushPublisher(conn *nats.Conn, subjectPrefix string) *NATSPushPublis
 	return &NATSPushPublisher{conn: conn, subject: strings.TrimSpace(subjectPrefix) + pushSubjectSuffix}
 }
 
-func (p *NATSPushPublisher) PublishAccount(_ context.Context, accountID string, packet *gen.DyWebSocketPacket, excluded []string) error {
-	return p.publish(natsPushEvent{Target: "account", IDs: []string{accountID}, ExcludedDeviceIDs: uniqueTrimmedStrings(excluded)}, packet)
+func (p *NATSPushPublisher) PublishAccount(_ context.Context, namespace, accountID string, packet *gen.DyWebSocketPacket, excluded []string) error {
+	return p.publish(natsPushEvent{Target: "account", Namespace: namespace, IDs: []string{accountID}, ExcludedDeviceIDs: uniqueTrimmedStrings(excluded)}, packet)
 }
 
-func (p *NATSPushPublisher) PublishDevices(_ context.Context, deviceIDs []string, packet *gen.DyWebSocketPacket) error {
-	return p.publish(natsPushEvent{Target: "device", IDs: uniqueTrimmedStrings(deviceIDs)}, packet)
+func (p *NATSPushPublisher) PublishDevices(_ context.Context, namespace string, deviceIDs []string, packet *gen.DyWebSocketPacket) error {
+	return p.publish(natsPushEvent{Target: "device", Namespace: namespace, IDs: uniqueTrimmedStrings(deviceIDs)}, packet)
 }
 
 func (p *NATSPushPublisher) publish(event natsPushEvent, packet *gen.DyWebSocketPacket) error {
@@ -72,14 +73,18 @@ func SubscribeWebSocketPushes(conn *nats.Conn, subjectPrefix string, svc *Servic
 		if err := protojson.Unmarshal(event.Packet, &packet); err != nil {
 			return
 		}
+		namespace := event.Namespace
+		if namespace == "" {
+			namespace = svc.GetDefaultNamespace()
+		}
 		switch event.Target {
 		case "account":
 			for _, accountID := range uniqueTrimmedStrings(event.IDs) {
-				svc.SendPacketToAccountExcept(accountID, &packet, event.ExcludedDeviceIDs)
+				svc.SendPacketToAccountExcept(namespace, accountID, &packet, event.ExcludedDeviceIDs)
 			}
 		case "device":
 			for _, deviceID := range uniqueTrimmedStrings(event.IDs) {
-				svc.SendPacketToDevice(deviceID, &packet)
+				svc.SendPacketToDevice(namespace, deviceID, &packet)
 			}
 		}
 	})

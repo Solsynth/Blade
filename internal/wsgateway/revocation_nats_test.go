@@ -11,7 +11,8 @@ import (
 func TestHandleAuthSessionRevokedMessage_DisconnectsMatchingSession(t *testing.T) {
 	svc := NewService(Config{}, nil, nil, nil, nil, nil, nil)
 	done := make(chan struct{})
-	svc.connections[connectionKey{accountID: "u1", deviceID: "device-1"}] = &wsConnection{
+	svc.connections[connectionKey{namespace: svc.cfg.DefaultNamespace, accountID: "u1", deviceID: "device-1"}] = &wsConnection{
+		namespace: svc.cfg.DefaultNamespace,
 		account:   &gen.DyAccount{Id: "u1"},
 		sessionID: "session-1",
 		deviceID:  "device-1",

@@ -36,7 +36,7 @@ func TestServiceHandlePacket_ForwardsEndpointPacket(t *testing.T) {
 	}
 
 	account := &gen.DyAccount{Id: "u1"}
-	if err := svc.HandlePacket(context.Background(), account, "d1", pkt); err != nil {
+	if err := svc.HandlePacket(context.Background(), account, svc.cfg.DefaultNamespace, "d1", pkt); err != nil {
 		t.Fatalf("unexpected handle error: %v", err)
 	}
 

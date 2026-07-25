@@ -32,11 +32,11 @@ func (s *GRPCService) PushWebSocketPacket(ctx context.Context, req *gen.DyPushWe
 		return nil, status.Error(codes.InvalidArgument, "packet is required")
 	}
 	if s.pusher != nil {
-		if err := s.pusher.PublishAccount(ctx, req.GetUserId(), req.GetPacket(), uniqueTrimmedStrings(req.GetExcludedWebsocketDeviceIds())); err != nil {
+		if err := s.pusher.PublishAccount(ctx, "", req.GetUserId(), req.GetPacket(), uniqueTrimmedStrings(req.GetExcludedWebsocketDeviceIds())); err != nil {
 			return nil, status.Errorf(codes.Unavailable, "publish websocket push: %v", err)
 		}
 	} else {
-		s.service.SendPacketToAccountExcept(req.GetUserId(), req.GetPacket(), req.GetExcludedWebsocketDeviceIds())
+		s.service.SendPacketToAccountExcept("", req.GetUserId(), req.GetPacket(), req.GetExcludedWebsocketDeviceIds())
 	}
 	return &emptypb.Empty{}, nil
 }
@@ -50,11 +50,11 @@ func (s *GRPCService) PushWebSocketPacketToUsers(ctx context.Context, req *gen.D
 	}
 	for _, userID := range uniqueTrimmedStrings(req.GetUserIds()) {
 		if s.pusher != nil {
-			if err := s.pusher.PublishAccount(ctx, userID, req.GetPacket(), nil); err != nil {
+			if err := s.pusher.PublishAccount(ctx, "", userID, req.GetPacket(), nil); err != nil {
 				return nil, status.Errorf(codes.Unavailable, "publish websocket push: %v", err)
 			}
 		} else {
-			s.service.SendPacketToAccount(userID, req.GetPacket())
+			s.service.SendPacketToAccount("", userID, req.GetPacket())
 		}
 	}
 	return &emptypb.Empty{}, nil
@@ -68,11 +68,11 @@ func (s *GRPCService) PushWebSocketPacketToDevice(ctx context.Context, req *gen.
 		return nil, status.Error(codes.InvalidArgument, "packet is required")
 	}
 	if s.pusher != nil {
-		if err := s.pusher.PublishDevices(ctx, []string{req.GetDeviceId()}, req.GetPacket()); err != nil {
+		if err := s.pusher.PublishDevices(ctx, "", []string{req.GetDeviceId()}, req.GetPacket()); err != nil {
 			return nil, status.Errorf(codes.Unavailable, "publish websocket push: %v", err)
 		}
 	} else {
-		s.service.SendPacketToDevice(req.GetDeviceId(), req.GetPacket())
+		s.service.SendPacketToDevice("", req.GetDeviceId(), req.GetPacket())
 	}
 	return &emptypb.Empty{}, nil
 }
@@ -86,12 +86,12 @@ func (s *GRPCService) PushWebSocketPacketToDevices(ctx context.Context, req *gen
 	}
 	deviceIDs := uniqueTrimmedStrings(req.GetDeviceIds())
 	if s.pusher != nil {
-		if err := s.pusher.PublishDevices(ctx, deviceIDs, req.GetPacket()); err != nil {
+		if err := s.pusher.PublishDevices(ctx, "", deviceIDs, req.GetPacket()); err != nil {
 			return nil, status.Errorf(codes.Unavailable, "publish websocket push: %v", err)
 		}
 	} else {
 		for _, deviceID := range deviceIDs {
-			s.service.SendPacketToDevice(deviceID, req.GetPacket())
+			s.service.SendPacketToDevice("", deviceID, req.GetPacket())
 		}
 	}
 	return &emptypb.Empty{}, nil
@@ -129,12 +129,12 @@ func (s *GRPCService) GetWebsocketConnectionStatus(_ context.Context, req *gen.D
 		if strings.TrimSpace(id.DeviceId) == "" {
 			return nil, status.Error(codes.InvalidArgument, "device_id is required")
 		}
-		connected = s.service.GetDeviceIsConnected(id.DeviceId)
+		connected = s.service.GetDeviceIsConnected("", id.DeviceId)
 	case *gen.DyGetWebsocketConnectionStatusRequest_UserId:
 		if strings.TrimSpace(id.UserId) == "" {
 			return nil, status.Error(codes.InvalidArgument, "user_id is required")
 		}
-		connected = s.service.GetAccountIsConnected(id.UserId)
+		connected = s.service.GetAccountIsConnected("", id.UserId)
 	default:
 		return nil, status.Error(codes.InvalidArgument, "unsupported id type")
 	}
@@ -152,7 +152,7 @@ func (s *GRPCService) GetWebsocketConnectionStatusBatch(_ context.Context, req *
 		if strings.TrimSpace(userID) == "" {
 			continue
 		}
-		result[userID] = s.service.GetAccountIsConnected(userID)
+		result[userID] = s.service.GetAccountIsConnected("", userID)
 	}
 
 	return &gen.DyGetWebsocketConnectionStatusBatchResponse{IsConnected: result}, nil
@@ -164,13 +164,13 @@ func (s *GRPCService) GetConnectedWebsocketDeviceIds(_ context.Context, req *gen
 	}
 
 	return &gen.DyGetConnectedWebsocketDeviceIdsResponse{
-		DeviceIds: s.service.GetConnectedDeviceIDs(req.GetDeviceIds()),
+		DeviceIds: s.service.GetConnectedDeviceIDs("", req.GetDeviceIds()),
 	}, nil
 }
 
 func (s *GRPCService) GetAllConnectedUserIds(_ context.Context, _ *emptypb.Empty) (*gen.DyGetAllConnectedUserIdsResponse, error) {
 	return &gen.DyGetAllConnectedUserIdsResponse{
-		UserIds: s.service.GetAllConnectedUserIDs(),
+		UserIds: s.service.GetAllConnectedUserIDs(""),
 	}, nil
 }
 
@@ -189,7 +189,7 @@ func (s *GRPCService) ReceiveWebSocketPacket(ctx context.Context, req *gen.DyRec
 	}
 
 	packet := packetFromProto(req.GetPacket())
-	if err := s.service.HandlePacket(ctx, req.GetAccount(), req.GetDeviceId(), packet); err != nil {
+	if err := s.service.HandlePacket(ctx, req.GetAccount(), "", req.GetDeviceId(), packet); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "failed to handle packet: %v", err)
 	}
 

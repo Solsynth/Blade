@@ -53,7 +53,7 @@ func handleAuthSessionRevokedMessage(svc *Service, msg *nats.Msg) {
 		return
 	}
 
-	disconnected := svc.DisconnectSession(event.SessionID, event.AccountID, firstNonEmpty(event.DeviceID, event.ClientID), "session logged out; please reconnect")
+	disconnected := svc.DisconnectSession("", event.SessionID, event.AccountID, firstNonEmpty(event.DeviceID, event.ClientID), "session logged out; please reconnect")
 	if disconnected == 0 {
 		logging.Log.Debug().
 			Str("subject", msg.Subject).

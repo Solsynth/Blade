@@ -34,7 +34,7 @@ type ConnectionEventPublisher interface {
 }
 
 type accountPresenceLister interface {
-	ActiveAccountIDs(context.Context) ([]string, error)
+	ActiveAccountIDs(context.Context, string) ([]string, error)
 }
 
 type SessionAuthContext struct {
@@ -48,15 +48,25 @@ type Config struct {
 	KeepAliveInterval time.Duration
 	MaxMessageBytes   int64
 	AllowedDeviceAlt  map[string]struct{}
+	Namespaces        map[string]NamespaceConfig
+	DefaultNamespace  string
+}
+
+type NamespaceConfig struct {
+	KeepAliveInterval time.Duration
+	MaxMessageBytes   int64
+	AllowedDeviceAlt  map[string]struct{}
 }
 
 type connectionKey struct {
+	namespace string
 	accountID string
 	deviceID  string
 }
 
 type wsConnection struct {
 	connectionID string
+	namespace    string
 	account      *gen.DyAccount
 	sessionID    string
 	deviceID     string
@@ -75,6 +85,7 @@ type wsConnection struct {
 }
 
 type ConnectionSnapshot struct {
+	Namespace string `json:"namespace"`
 	AccountID string `json:"accountId"`
 	DeviceID  string `json:"deviceId"`
 }
@@ -109,6 +120,10 @@ type Service struct {
 // can still run in a single-node development environment without Redis.
 func (s *Service) SetPresence(presence PresenceStore) { s.presence = presence }
 
+func (s *Service) GetDefaultNamespace() string {
+	return s.cfg.DefaultNamespace
+}
+
 func NewService(cfg Config, handlers []PacketHandler, forwarder UnknownPacketForwarder, events ConnectionEventPublisher, authenticator dyauth.TokenAuthenticator, c cache.CacheService, profiles gen.DyProfileServiceClient) *Service {
 	handlerMap := make(map[string]PacketHandler, len(handlers))
 	for _, h := range handlers {
@@ -124,6 +139,19 @@ func NewService(cfg Config, handlers []PacketHandler, forwarder UnknownPacketFor
 	if cfg.AllowedDeviceAlt == nil {
 		cfg.AllowedDeviceAlt = map[string]struct{}{"watch": {}}
 	}
+	if cfg.Namespaces == nil {
+		cfg.Namespaces = make(map[string]NamespaceConfig)
+	}
+	if cfg.DefaultNamespace == "" {
+		cfg.DefaultNamespace = "_default"
+	}
+	if _, ok := cfg.Namespaces[cfg.DefaultNamespace]; !ok {
+		cfg.Namespaces[cfg.DefaultNamespace] = NamespaceConfig{
+			KeepAliveInterval: cfg.KeepAliveInterval,
+			MaxMessageBytes:   cfg.MaxMessageBytes,
+			AllowedDeviceAlt:  cfg.AllowedDeviceAlt,
+		}
+	}
 
 	return &Service{
 		cfg:           cfg,
@@ -137,9 +165,32 @@ func NewService(cfg Config, handlers []PacketHandler, forwarder UnknownPacketFor
 	}
 }
 
-func (s *Service) TryAdd(auth SessionAuthContext, deviceID string, conn *websocket.Conn, cancel context.CancelFunc) (*wsConnection, *wsConnection) {
+func (s *Service) resolveNamespaceConfig(namespace string) NamespaceConfig {
+	if ns, ok := s.cfg.Namespaces[namespace]; ok {
+		if ns.KeepAliveInterval <= 0 {
+			ns.KeepAliveInterval = s.cfg.KeepAliveInterval
+		}
+		if ns.MaxMessageBytes <= 0 {
+			ns.MaxMessageBytes = s.cfg.MaxMessageBytes
+		}
+		if ns.AllowedDeviceAlt == nil {
+			ns.AllowedDeviceAlt = s.cfg.AllowedDeviceAlt
+		}
+		return ns
+	}
+	return NamespaceConfig{
+		KeepAliveInterval: s.cfg.KeepAliveInterval,
+		MaxMessageBytes:   s.cfg.MaxMessageBytes,
+		AllowedDeviceAlt:  s.cfg.AllowedDeviceAlt,
+	}
+}
+
+func (s *Service) TryAdd(auth SessionAuthContext, namespace, deviceID string, conn *websocket.Conn, cancel context.CancelFunc) (*wsConnection, *wsConnection) {
 	account := auth.Account
-	key := connectionKey{accountID: account.GetId(), deviceID: deviceID}
+	if namespace == "" {
+		namespace = s.cfg.DefaultNamespace
+	}
+	key := connectionKey{namespace: namespace, accountID: account.GetId(), deviceID: deviceID}
 	reauthOK := supportsSessionReauth(auth.TokenInfo)
 	expiresAt := timestampToTime(auth.Session.GetExpiredAt())
 	if !reauthOK {
@@ -147,6 +198,7 @@ func (s *Service) TryAdd(auth SessionAuthContext, deviceID string, conn *websock
 	}
 	entry := &wsConnection{
 		connectionID: uuid.NewString(),
+		namespace:    namespace,
 		account:      account,
 		sessionID:    auth.Session.GetId(),
 		deviceID:     deviceID,
@@ -169,10 +221,14 @@ func (s *Service) TryAdd(auth SessionAuthContext, deviceID string, conn *websock
 	return entry, old
 }
 
-func (s *Service) TryAddUniqueDevice(account *gen.DyAccount, deviceID string, conn *websocket.Conn) (*wsConnection, bool) {
-	key := connectionKey{accountID: account.GetId(), deviceID: deviceID}
+func (s *Service) TryAddUniqueDevice(namespace string, account *gen.DyAccount, deviceID string, conn *websocket.Conn) (*wsConnection, bool) {
+	if namespace == "" {
+		namespace = s.cfg.DefaultNamespace
+	}
+	key := connectionKey{namespace: namespace, accountID: account.GetId(), deviceID: deviceID}
 	entry := &wsConnection{
 		connectionID: uuid.NewString(),
+		namespace:    namespace,
 		account:      account,
 		deviceID:     deviceID,
 		conn:         conn,
@@ -183,7 +239,7 @@ func (s *Service) TryAddUniqueDevice(account *gen.DyAccount, deviceID string, co
 
 	s.mu.Lock()
 	for existingKey, existing := range s.connections {
-		if existing.deviceID != deviceID {
+		if existing.namespace != namespace || existing.deviceID != deviceID {
 			continue
 		}
 
@@ -204,8 +260,11 @@ func (s *Service) TryAddUniqueDevice(account *gen.DyAccount, deviceID string, co
 	return entry, true
 }
 
-func (s *Service) Disconnect(accountID, deviceID string, reason string) {
-	key := connectionKey{accountID: accountID, deviceID: deviceID}
+func (s *Service) Disconnect(namespace, accountID, deviceID string, reason string) {
+	if namespace == "" {
+		namespace = s.cfg.DefaultNamespace
+	}
+	key := connectionKey{namespace: namespace, accountID: accountID, deviceID: deviceID}
 
 	s.mu.Lock()
 	entry, ok := s.connections[key]
@@ -221,7 +280,10 @@ func (s *Service) Disconnect(accountID, deviceID string, reason string) {
 	entry.close(reason)
 }
 
-func (s *Service) DisconnectSession(sessionID, accountID, deviceID, reason string) int {
+func (s *Service) DisconnectSession(namespace, sessionID, accountID, deviceID, reason string) int {
+	if namespace == "" {
+		namespace = s.cfg.DefaultNamespace
+	}
 	sessionID = strings.TrimSpace(sessionID)
 	accountID = strings.TrimSpace(accountID)
 	deviceID = strings.TrimSpace(deviceID)
@@ -229,6 +291,9 @@ func (s *Service) DisconnectSession(sessionID, accountID, deviceID, reason strin
 	s.mu.Lock()
 	targets := make([]*wsConnection, 0, len(s.connections))
 	for key, entry := range s.connections {
+		if key.namespace != namespace {
+			continue
+		}
 		if sessionID != "" && entry.getSessionID() == sessionID {
 			targets = append(targets, entry)
 			delete(s.connections, key)
@@ -299,7 +364,7 @@ func (s *Service) startSessionMonitor(ctx context.Context, entry *wsConnection) 
 					Str("type", string(entry.tokenInfo.Type)).
 					Str("disconnectReason", reason).
 					Msg("Disconnecting websocket connection after session reauthentication failure")
-				s.Disconnect(entry.getAccountID(), entry.deviceID, reason)
+				s.Disconnect(entry.namespace, entry.getAccountID(), entry.deviceID, reason)
 				return
 			}
 		}
@@ -310,7 +375,8 @@ func (s *Service) startPresenceMonitor(ctx context.Context, entry *wsConnection)
 	if s.presence == nil {
 		return
 	}
-	interval := s.cfg.KeepAliveInterval
+	nsCfg := s.resolveNamespaceConfig(entry.namespace)
+	interval := nsCfg.KeepAliveInterval
 	if interval <= 0 {
 		interval = time.Minute
 	}
@@ -322,8 +388,8 @@ func (s *Service) startPresenceMonitor(ctx context.Context, entry *wsConnection)
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if err := s.presence.Refresh(ctx, entry.getAccountID(), entry.deviceID, entry.connectionID); err != nil {
-					logging.Log.Warn().Err(err).Str("accountId", entry.getAccountID()).Str("deviceId", entry.deviceID).Msg("Failed to refresh websocket presence")
+				if err := s.presence.Refresh(ctx, entry.namespace, entry.getAccountID(), entry.deviceID, entry.connectionID); err != nil {
+					logging.Log.Warn().Err(err).Str("namespace", entry.namespace).Str("accountId", entry.getAccountID()).Str("deviceId", entry.deviceID).Msg("Failed to refresh websocket presence")
 				}
 			}
 		}
@@ -397,8 +463,8 @@ func (s *Service) reauthenticateConnection(ctx context.Context, entry *wsConnect
 	return nil
 }
 
-func (s *Service) remove(accountID, deviceID string, expected *wsConnection) {
-	key := connectionKey{accountID: accountID, deviceID: deviceID}
+func (s *Service) remove(namespace, accountID, deviceID string, expected *wsConnection) {
+	key := connectionKey{namespace: namespace, accountID: accountID, deviceID: deviceID}
 	s.mu.Lock()
 	if current := s.connections[key]; expected == nil || current == expected {
 		delete(s.connections, key)
@@ -406,9 +472,12 @@ func (s *Service) remove(accountID, deviceID string, expected *wsConnection) {
 	s.mu.Unlock()
 }
 
-func (s *Service) GetDeviceIsConnected(deviceID string) bool {
+func (s *Service) GetDeviceIsConnected(namespace, deviceID string) bool {
+	if namespace == "" {
+		namespace = s.cfg.DefaultNamespace
+	}
 	if s.presence != nil {
-		if connected, err := s.presence.DeviceConnected(context.Background(), deviceID); err == nil {
+		if connected, err := s.presence.DeviceConnected(context.Background(), namespace, deviceID); err == nil {
 			if connected {
 				return true
 			}
@@ -418,14 +487,17 @@ func (s *Service) GetDeviceIsConnected(deviceID string) bool {
 	defer s.mu.RUnlock()
 
 	for _, conn := range s.connections {
-		if conn.deviceID == deviceID {
+		if conn.namespace == namespace && conn.deviceID == deviceID {
 			return true
 		}
 	}
 	return false
 }
 
-func (s *Service) GetConnectedDeviceIDs(deviceIDs []string) []string {
+func (s *Service) GetConnectedDeviceIDs(namespace string, deviceIDs []string) []string {
+	if namespace == "" {
+		namespace = s.cfg.DefaultNamespace
+	}
 	uniqueDeviceIDs := make(map[string]struct{}, len(deviceIDs))
 	for _, deviceID := range deviceIDs {
 		deviceID = strings.TrimSpace(deviceID)
@@ -442,7 +514,7 @@ func (s *Service) GetConnectedDeviceIDs(deviceIDs []string) []string {
 		requestedDeviceIDs = append(requestedDeviceIDs, deviceID)
 	}
 	if s.presence != nil {
-		if connected, err := s.presence.DevicesConnected(context.Background(), requestedDeviceIDs); err == nil {
+		if connected, err := s.presence.DevicesConnected(context.Background(), namespace, requestedDeviceIDs); err == nil {
 			return connectedDeviceIDs(connected)
 		}
 	}
@@ -450,8 +522,10 @@ func (s *Service) GetConnectedDeviceIDs(deviceIDs []string) []string {
 	s.mu.RLock()
 	connected := make(map[string]bool, len(requestedDeviceIDs))
 	for _, conn := range s.connections {
-		if _, requested := uniqueDeviceIDs[conn.deviceID]; requested {
-			connected[conn.deviceID] = true
+		if conn.namespace == namespace {
+			if _, requested := uniqueDeviceIDs[conn.deviceID]; requested {
+				connected[conn.deviceID] = true
+			}
 		}
 	}
 	s.mu.RUnlock()
@@ -469,9 +543,12 @@ func connectedDeviceIDs(statuses map[string]bool) []string {
 	return deviceIDs
 }
 
-func (s *Service) GetAccountIsConnected(accountID string) bool {
+func (s *Service) GetAccountIsConnected(namespace, accountID string) bool {
+	if namespace == "" {
+		namespace = s.cfg.DefaultNamespace
+	}
 	if s.presence != nil {
-		if connected, err := s.presence.AccountConnected(context.Background(), accountID); err == nil {
+		if connected, err := s.presence.AccountConnected(context.Background(), namespace, accountID); err == nil {
 			if connected {
 				return true
 			}
@@ -481,16 +558,19 @@ func (s *Service) GetAccountIsConnected(accountID string) bool {
 	defer s.mu.RUnlock()
 
 	for key := range s.connections {
-		if key.accountID == accountID {
+		if key.namespace == namespace && key.accountID == accountID {
 			return true
 		}
 	}
 	return false
 }
 
-func (s *Service) GetAllConnectedUserIDs() []string {
+func (s *Service) GetAllConnectedUserIDs(namespace string) []string {
+	if namespace == "" {
+		namespace = s.cfg.DefaultNamespace
+	}
 	if lister, ok := s.presence.(accountPresenceLister); ok {
-		if accountIDs, err := lister.ActiveAccountIDs(context.Background()); err == nil {
+		if accountIDs, err := lister.ActiveAccountIDs(context.Background(), namespace); err == nil {
 			return accountIDs
 		}
 	}
@@ -499,7 +579,9 @@ func (s *Service) GetAllConnectedUserIDs() []string {
 
 	seen := make(map[string]struct{})
 	for key := range s.connections {
-		seen[key.accountID] = struct{}{}
+		if key.namespace == namespace {
+			seen[key.accountID] = struct{}{}
+		}
 	}
 
 	out := make([]string, 0, len(seen))
@@ -510,13 +592,18 @@ func (s *Service) GetAllConnectedUserIDs() []string {
 	return out
 }
 
-func (s *Service) GetAllConnectedDeviceIDs() []string {
+func (s *Service) GetAllConnectedDeviceIDs(namespace string) []string {
+	if namespace == "" {
+		namespace = s.cfg.DefaultNamespace
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	seen := make(map[string]struct{})
 	for _, conn := range s.connections {
-		seen[conn.deviceID] = struct{}{}
+		if conn.namespace == namespace {
+			seen[conn.deviceID] = struct{}{}
+		}
 	}
 
 	out := make([]string, 0, len(seen))
@@ -549,13 +636,16 @@ func (s *Service) GetConnectionSnapshots() []ConnectionSnapshot {
 	return out
 }
 
-func (s *Service) GetDevicesByAccount(accountID string) []string {
+func (s *Service) GetDevicesByAccount(namespace, accountID string) []string {
+	if namespace == "" {
+		namespace = s.cfg.DefaultNamespace
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	devices := make([]string, 0)
 	for key, conn := range s.connections {
-		if key.accountID == accountID {
+		if key.namespace == namespace && key.accountID == accountID {
 			devices = append(devices, conn.deviceID)
 		}
 	}
@@ -563,13 +653,16 @@ func (s *Service) GetDevicesByAccount(accountID string) []string {
 	return devices
 }
 
-func (s *Service) GetAccountsByDevice(deviceID string) []string {
+func (s *Service) GetAccountsByDevice(namespace, deviceID string) []string {
+	if namespace == "" {
+		namespace = s.cfg.DefaultNamespace
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	accounts := make([]string, 0)
 	for key, conn := range s.connections {
-		if conn.deviceID == deviceID {
+		if key.namespace == namespace && conn.deviceID == deviceID {
 			accounts = append(accounts, key.accountID)
 		}
 	}
@@ -577,15 +670,19 @@ func (s *Service) GetAccountsByDevice(deviceID string) []string {
 	return accounts
 }
 
-func (s *Service) SendPacketToAccount(accountID string, packet *gen.DyWebSocketPacket) {
-	s.SendPacketToAccountExcept(accountID, packet, nil)
+func (s *Service) SendPacketToAccount(namespace, accountID string, packet *gen.DyWebSocketPacket) {
+	s.SendPacketToAccountExcept(namespace, accountID, packet, nil)
 }
 
-func (s *Service) SendPacketToAccountExcept(accountID string, packet *gen.DyWebSocketPacket, excludedDeviceIDs []string) {
-	entries := s.getAccountConnections(accountID, excludedDeviceIDs)
+func (s *Service) SendPacketToAccountExcept(namespace, accountID string, packet *gen.DyWebSocketPacket, excludedDeviceIDs []string) {
+	if namespace == "" {
+		namespace = s.cfg.DefaultNamespace
+	}
+	entries := s.getAccountConnections(namespace, accountID, excludedDeviceIDs)
 	excluded := uniqueTrimmedStrings(excludedDeviceIDs)
 
 	logging.Log.Debug().
+		Str("namespace", namespace).
 		Str("accountId", accountID).
 		Str("packetType", packet.GetType()).
 		Strs("excludedDeviceIds", excluded).
@@ -594,24 +691,25 @@ func (s *Service) SendPacketToAccountExcept(accountID string, packet *gen.DyWebS
 
 	for _, entry := range entries {
 		logging.Log.Debug().
+			Str("namespace", namespace).
 			Str("accountId", accountID).
 			Str("deviceId", entry.deviceID).
 			Str("packetType", packet.GetType()).
 			Msg("Sending websocket packet to account connection")
 		if err := entry.sendProto(packet); err != nil {
-			logging.Log.Warn().Err(err).Str("accountId", accountID).Str("deviceId", entry.deviceID).Msg("Failed to send packet to account connection")
+			logging.Log.Warn().Err(err).Str("namespace", namespace).Str("accountId", accountID).Str("deviceId", entry.deviceID).Msg("Failed to send packet to account connection")
 		}
 	}
 }
 
-func (s *Service) getAccountConnections(accountID string, excludedDeviceIDs []string) []*wsConnection {
+func (s *Service) getAccountConnections(namespace, accountID string, excludedDeviceIDs []string) []*wsConnection {
 	excluded := makeDeviceIDSet(excludedDeviceIDs)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	entries := make([]*wsConnection, 0)
 	for key, entry := range s.connections {
-		if key.accountID == accountID {
+		if key.namespace == namespace && key.accountID == accountID {
 			if _, skip := excluded[entry.deviceID]; skip {
 				continue
 			}
@@ -634,10 +732,14 @@ func makeDeviceIDSet(deviceIDs []string) map[string]struct{} {
 	return out
 }
 
-func (s *Service) SendPacketToDevice(deviceID string, packet *gen.DyWebSocketPacket) {
-	entries := s.getDeviceConnections(deviceID)
+func (s *Service) SendPacketToDevice(namespace, deviceID string, packet *gen.DyWebSocketPacket) {
+	if namespace == "" {
+		namespace = s.cfg.DefaultNamespace
+	}
+	entries := s.getDeviceConnections(namespace, deviceID)
 
 	logging.Log.Debug().
+		Str("namespace", namespace).
 		Str("deviceId", deviceID).
 		Str("packetType", packet.GetType()).
 		Int("targetCount", len(entries)).
@@ -645,36 +747,37 @@ func (s *Service) SendPacketToDevice(deviceID string, packet *gen.DyWebSocketPac
 
 	for _, entry := range entries {
 		logging.Log.Debug().
+			Str("namespace", namespace).
 			Str("accountId", entry.getAccountID()).
 			Str("deviceId", deviceID).
 			Str("packetType", packet.GetType()).
 			Msg("Sending websocket packet to device connection")
 		if err := entry.sendProtoPriority(packet); err != nil {
-			logging.Log.Warn().Err(err).Str("accountId", entry.getAccountID()).Str("deviceId", deviceID).Msg("Failed to send packet to device")
+			logging.Log.Warn().Err(err).Str("namespace", namespace).Str("accountId", entry.getAccountID()).Str("deviceId", deviceID).Msg("Failed to send packet to device")
 		}
 	}
 }
 
-func (s *Service) getDeviceConnections(deviceID string) []*wsConnection {
+func (s *Service) getDeviceConnections(namespace, deviceID string) []*wsConnection {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	entries := make([]*wsConnection, 0)
 	for _, entry := range s.connections {
-		if entry.deviceID == deviceID {
+		if entry.namespace == namespace && entry.deviceID == deviceID {
 			entries = append(entries, entry)
 		}
 	}
 	return entries
 }
 
-func (s *Service) HandlePacket(ctx context.Context, account *gen.DyAccount, deviceID string, packet Packet) error {
+func (s *Service) HandlePacket(ctx context.Context, account *gen.DyAccount, namespace, deviceID string, packet Packet) error {
 	if packet.Type == "" {
 		return errors.New("empty packet type")
 	}
 
 	if packet.Type == PacketTypePing {
-		s.SendPacketToDevice(deviceID, &gen.DyWebSocketPacket{Type: PacketTypePong})
+		s.SendPacketToDevice(namespace, deviceID, &gen.DyWebSocketPacket{Type: PacketTypePong})
 		return nil
 	}
 
@@ -693,28 +796,33 @@ func (s *Service) HandlePacket(ctx context.Context, account *gen.DyAccount, devi
 	return fmt.Errorf("unprocessable packet: %s", packet.Type)
 }
 
-func (s *Service) HandleConnection(ctx context.Context, auth SessionAuthContext, deviceID string, conn *websocket.Conn) {
+func (s *Service) HandleConnection(ctx context.Context, auth SessionAuthContext, namespace, deviceID string, conn *websocket.Conn) {
 	account := auth.Account
+	if namespace == "" {
+		namespace = s.cfg.DefaultNamespace
+	}
 	deviceID = s.normalizeDeviceID(deviceID)
 	connCtx, cancel := context.WithCancel(ctx)
 
 	logging.Log.Info().
+		Str("namespace", namespace).
 		Str("accountId", account.GetId()).
 		Str("deviceId", deviceID).
 		Str("sessionId", auth.Session.GetId()).
 		Msg("Handling websocket connection")
 
-	entry, old := s.TryAdd(auth, deviceID, conn, cancel)
+	entry, old := s.TryAdd(auth, namespace, deviceID, conn, cancel)
 	entry.startWriter()
 	if s.presence != nil {
-		if err := s.presence.Register(connCtx, account.GetId(), deviceID, entry.connectionID); err != nil {
-			logging.Log.Warn().Err(err).Str("accountId", account.GetId()).Str("deviceId", deviceID).Msg("Failed to register websocket presence")
+		if err := s.presence.Register(connCtx, namespace, account.GetId(), deviceID, entry.connectionID); err != nil {
+			logging.Log.Warn().Err(err).Str("namespace", namespace).Str("accountId", account.GetId()).Str("deviceId", deviceID).Msg("Failed to register websocket presence")
 		} else {
 			s.startPresenceMonitor(connCtx, entry)
 		}
 	}
 	if old != nil {
 		logging.Log.Info().
+			Str("namespace", namespace).
 			Str("accountId", account.GetId()).
 			Str("deviceId", deviceID).
 			Msg("Disconnecting previous websocket connection due to duplicated device id")
@@ -725,26 +833,27 @@ func (s *Service) HandleConnection(ctx context.Context, auth SessionAuthContext,
 
 	if s.events != nil {
 		if err := s.events.PublishConnected(connCtx, account.GetId(), deviceID); err != nil {
-			logging.Log.Warn().Err(err).Str("accountId", account.GetId()).Str("deviceId", deviceID).Msg("Failed to publish websocket connect event")
+			logging.Log.Warn().Err(err).Str("namespace", namespace).Str("accountId", account.GetId()).Str("deviceId", deviceID).Msg("Failed to publish websocket connect event")
 		}
 	}
 
 	defer func() {
 		cancel()
-		s.remove(account.GetId(), deviceID, entry)
+		s.remove(namespace, account.GetId(), deviceID, entry)
 		if s.presence != nil {
-			if err := s.presence.Remove(context.Background(), account.GetId(), deviceID, entry.connectionID); err != nil {
-				logging.Log.Warn().Err(err).Str("accountId", account.GetId()).Str("deviceId", deviceID).Msg("Failed to remove websocket presence")
+			if err := s.presence.Remove(context.Background(), namespace, account.GetId(), deviceID, entry.connectionID); err != nil {
+				logging.Log.Warn().Err(err).Str("namespace", namespace).Str("accountId", account.GetId()).Str("deviceId", deviceID).Msg("Failed to remove websocket presence")
 			}
 		}
-		isOffline := !s.GetAccountIsConnected(account.GetId())
+		isOffline := !s.GetAccountIsConnected(namespace, account.GetId())
 		if s.events != nil {
 			if err := s.events.PublishDisconnected(connCtx, account.GetId(), deviceID, isOffline); err != nil {
-				logging.Log.Warn().Err(err).Str("accountId", account.GetId()).Str("deviceId", deviceID).Msg("Failed to publish websocket disconnect event")
+				logging.Log.Warn().Err(err).Str("namespace", namespace).Str("accountId", account.GetId()).Str("deviceId", deviceID).Msg("Failed to publish websocket disconnect event")
 			}
 		}
 		entry.close("")
 		logging.Log.Info().
+			Str("namespace", namespace).
 			Str("accountId", account.GetId()).
 			Str("deviceId", deviceID).
 			Str("sessionId", entry.getSessionID()).
@@ -752,20 +861,24 @@ func (s *Service) HandleConnection(ctx context.Context, auth SessionAuthContext,
 			Msg("Websocket connection closed")
 	}()
 
+	nsCfg := s.resolveNamespaceConfig(namespace)
+
 	for {
 		var raw []byte
 		if err := websocket.Message.Receive(conn, &raw); err != nil {
 			logging.Log.Debug().
 				Err(err).
+				Str("namespace", namespace).
 				Str("accountId", account.GetId()).
 				Str("deviceId", deviceID).
 				Msg("Stopped websocket receive loop")
 			return
 		}
-		if int64(len(raw)) > s.cfg.MaxMessageBytes {
+		if int64(len(raw)) > nsCfg.MaxMessageBytes {
 			logging.Log.Warn().
 				Int("sizeBytes", len(raw)).
-				Int64("maxMessageBytes", s.cfg.MaxMessageBytes).
+				Int64("maxMessageBytes", nsCfg.MaxMessageBytes).
+				Str("namespace", namespace).
 				Str("accountId", account.GetId()).
 				Str("deviceId", deviceID).
 				Msg("Rejected websocket packet due to size limit")
@@ -777,6 +890,7 @@ func (s *Service) HandleConnection(ctx context.Context, auth SessionAuthContext,
 		if err := json.Unmarshal(raw, &packet); err != nil {
 			logging.Log.Warn().
 				Err(err).
+				Str("namespace", namespace).
 				Str("accountId", account.GetId()).
 				Str("deviceId", deviceID).
 				Msg("Rejected websocket packet due to invalid JSON")
@@ -784,11 +898,12 @@ func (s *Service) HandleConnection(ctx context.Context, auth SessionAuthContext,
 			continue
 		}
 
-		if err := s.HandlePacket(connCtx, account, deviceID, packet); err != nil {
+		if err := s.HandlePacket(connCtx, account, namespace, deviceID, packet); err != nil {
 			logging.Log.Warn().
 				Err(err).
 				Str("packetType", packet.Type).
 				Str("endpoint", packet.Endpoint).
+				Str("namespace", namespace).
 				Str("accountId", account.GetId()).
 				Str("deviceId", deviceID).
 				Msg("Failed to handle websocket packet")

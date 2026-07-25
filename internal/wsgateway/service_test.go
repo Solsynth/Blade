@@ -61,14 +61,15 @@ func TestServiceTryAddUniqueDevice_RejectsDuplicateDeviceID(t *testing.T) {
 	account1 := &gen.DyAccount{Id: "u1"}
 	account2 := &gen.DyAccount{Id: "u2"}
 
-	svc.connections[connectionKey{accountID: "u1", deviceID: "d1"}] = &wsConnection{
-		account:  account1,
-		deviceID: "d1",
+	svc.connections[connectionKey{namespace: svc.cfg.DefaultNamespace, accountID: "u1", deviceID: "d1"}] = &wsConnection{
+		namespace: svc.cfg.DefaultNamespace,
+		account:   account1,
+		deviceID:  "d1",
 		probe: func() bool {
 			return true
 		},
 	}
-	if _, ok := svc.TryAddUniqueDevice(account2, "d1", nil); ok {
+	if _, ok := svc.TryAddUniqueDevice(svc.cfg.DefaultNamespace, account2, "d1", nil); ok {
 		t.Fatal("expected duplicate device id to be rejected")
 	}
 }
@@ -78,10 +79,10 @@ func TestServiceTryAddUniqueDevice_AcceptsDifferentDeviceID(t *testing.T) {
 	account1 := &gen.DyAccount{Id: "u1"}
 	account2 := &gen.DyAccount{Id: "u2"}
 
-	if _, ok := svc.TryAddUniqueDevice(account1, "d1", nil); !ok {
+	if _, ok := svc.TryAddUniqueDevice(svc.cfg.DefaultNamespace, account1, "d1", nil); !ok {
 		t.Fatal("expected first connection to be accepted")
 	}
-	if _, ok := svc.TryAddUniqueDevice(account2, "d2", nil); !ok {
+	if _, ok := svc.TryAddUniqueDevice(svc.cfg.DefaultNamespace, account2, "d2", nil); !ok {
 		t.Fatal("expected different device id to be accepted")
 	}
 }
@@ -91,18 +92,19 @@ func TestServiceTryAddUniqueDevice_ReplacesStaleDuplicateDeviceID(t *testing.T) 
 	account1 := &gen.DyAccount{Id: "u1"}
 	account2 := &gen.DyAccount{Id: "u2"}
 
-	svc.connections[connectionKey{accountID: "u1", deviceID: "d1"}] = &wsConnection{
-		account:  account1,
-		deviceID: "d1",
+	svc.connections[connectionKey{namespace: svc.cfg.DefaultNamespace, accountID: "u1", deviceID: "d1"}] = &wsConnection{
+		namespace: svc.cfg.DefaultNamespace,
+		account:   account1,
+		deviceID:  "d1",
 		probe: func() bool {
 			return false
 		},
 	}
-	if _, ok := svc.TryAddUniqueDevice(account2, "d1", nil); !ok {
+	if _, ok := svc.TryAddUniqueDevice(svc.cfg.DefaultNamespace, account2, "d1", nil); !ok {
 		t.Fatal("expected stale duplicate device id to be replaced")
 	}
 
-	accounts := svc.GetAccountsByDevice("d1")
+	accounts := svc.GetAccountsByDevice(svc.cfg.DefaultNamespace, "d1")
 	if len(accounts) != 1 || accounts[0] != "u2" {
 		t.Fatalf("expected device d1 to belong only to u2 after replacement, got %#v", accounts)
 	}
@@ -110,20 +112,23 @@ func TestServiceTryAddUniqueDevice_ReplacesStaleDuplicateDeviceID(t *testing.T) 
 
 func TestServiceGetAccountConnections_ExcludesDeviceIDs(t *testing.T) {
 	svc := NewService(Config{}, nil, nil, nil, nil, nil, nil)
-	svc.connections[connectionKey{accountID: "u1", deviceID: "d1"}] = &wsConnection{
-		account:  &gen.DyAccount{Id: "u1"},
-		deviceID: "d1",
+	svc.connections[connectionKey{namespace: svc.cfg.DefaultNamespace, accountID: "u1", deviceID: "d1"}] = &wsConnection{
+		namespace: svc.cfg.DefaultNamespace,
+		account:   &gen.DyAccount{Id: "u1"},
+		deviceID:  "d1",
 	}
-	svc.connections[connectionKey{accountID: "u1", deviceID: "d2"}] = &wsConnection{
-		account:  &gen.DyAccount{Id: "u1"},
-		deviceID: "d2",
+	svc.connections[connectionKey{namespace: svc.cfg.DefaultNamespace, accountID: "u1", deviceID: "d2"}] = &wsConnection{
+		namespace: svc.cfg.DefaultNamespace,
+		account:   &gen.DyAccount{Id: "u1"},
+		deviceID:  "d2",
 	}
-	svc.connections[connectionKey{accountID: "u2", deviceID: "d3"}] = &wsConnection{
-		account:  &gen.DyAccount{Id: "u2"},
-		deviceID: "d3",
+	svc.connections[connectionKey{namespace: svc.cfg.DefaultNamespace, accountID: "u2", deviceID: "d3"}] = &wsConnection{
+		namespace: svc.cfg.DefaultNamespace,
+		account:   &gen.DyAccount{Id: "u2"},
+		deviceID:  "d3",
 	}
 
-	got := svc.getAccountConnections("u1", []string{" d2 ", "", "missing"})
+	got := svc.getAccountConnections(svc.cfg.DefaultNamespace, "u1", []string{" d2 ", "", "missing"})
 	if len(got) != 1 {
 		t.Fatalf("expected 1 included connection, got %d", len(got))
 	}
@@ -135,18 +140,19 @@ func TestServiceGetAccountConnections_ExcludesDeviceIDs(t *testing.T) {
 func TestServiceDisconnectSession_MatchesSessionID(t *testing.T) {
 	svc := NewService(Config{}, nil, nil, nil, nil, nil, nil)
 	done := make(chan struct{})
-	svc.connections[connectionKey{accountID: "u1", deviceID: "d1"}] = &wsConnection{
+	svc.connections[connectionKey{namespace: svc.cfg.DefaultNamespace, accountID: "u1", deviceID: "d1"}] = &wsConnection{
+		namespace: svc.cfg.DefaultNamespace,
 		account:   &gen.DyAccount{Id: "u1"},
 		sessionID: "s1",
 		deviceID:  "d1",
 		done:      done,
 	}
 
-	disconnected := svc.DisconnectSession("s1", "", "", "logged out")
+	disconnected := svc.DisconnectSession("", "s1", "", "", "logged out")
 	if disconnected != 1 {
 		t.Fatalf("expected 1 disconnected connection, got %d", disconnected)
 	}
-	if svc.GetAccountIsConnected("u1") {
+	if svc.GetAccountIsConnected("", "u1") {
 		t.Fatal("expected connection to be removed after disconnect")
 	}
 
@@ -160,13 +166,14 @@ func TestServiceDisconnectSession_MatchesSessionID(t *testing.T) {
 func TestServiceDisconnectSession_FallsBackToAccountAndDevicePrefix(t *testing.T) {
 	svc := NewService(Config{}, nil, nil, nil, nil, nil, nil)
 	done := make(chan struct{})
-	svc.connections[connectionKey{accountID: "u1", deviceID: "device-1+watch"}] = &wsConnection{
-		account:  &gen.DyAccount{Id: "u1"},
-		deviceID: "device-1+watch",
-		done:     done,
+	svc.connections[connectionKey{namespace: svc.cfg.DefaultNamespace, accountID: "u1", deviceID: "device-1+watch"}] = &wsConnection{
+		namespace: svc.cfg.DefaultNamespace,
+		account:   &gen.DyAccount{Id: "u1"},
+		deviceID:  "device-1+watch",
+		done:      done,
 	}
 
-	disconnected := svc.DisconnectSession("", "u1", "device-1", "logged out")
+	disconnected := svc.DisconnectSession("", "", "u1", "device-1", "logged out")
 	if disconnected != 1 {
 		t.Fatalf("expected fallback disconnect to match watch suffix, got %d", disconnected)
 	}
@@ -278,7 +285,7 @@ func TestServiceTryAdd_APIKeyDisablesReauthAndExpiry(t *testing.T) {
 			ExpiredAt: timestamppb.New(expiry),
 		},
 		TokenInfo: dyauth.TokenInfo{Token: "api-key-token", Type: dyauth.TokenTypeApiKey},
-	}, "d1", nil, nil)
+	}, svc.cfg.DefaultNamespace, "d1", nil, nil)
 
 	if entry.supportsReauth() {
 		t.Fatal("expected api key connection to disable reauth")

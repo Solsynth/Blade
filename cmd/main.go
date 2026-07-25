@@ -232,11 +232,13 @@ func main() {
 		if isDebugMode {
 			debugWs := r.Group("/debug/ws")
 			debugWs.GET("/summary", func(c *gin.Context) {
-				users := wsService.GetAllConnectedUserIDs()
-				devices := wsService.GetAllConnectedDeviceIDs()
+				namespace := c.DefaultQuery("namespace", "")
+				users := wsService.GetAllConnectedUserIDs(namespace)
+				devices := wsService.GetAllConnectedDeviceIDs(namespace)
 				c.JSON(http.StatusOK, gin.H{
 					"enabled":         true,
 					"path":            cfg.WebSocket.Path,
+					"namespace":       namespace,
 					"connectionCount": len(wsService.GetConnectionSnapshots()),
 					"userCount":       len(users),
 					"deviceCount":     len(devices),
@@ -252,9 +254,11 @@ func main() {
 				})
 			})
 			debugWs.GET("/account/:accountId", func(c *gin.Context) {
+				namespace := c.DefaultQuery("namespace", "")
 				accountID := c.Param("accountId")
-				devices := wsService.GetDevicesByAccount(accountID)
+				devices := wsService.GetDevicesByAccount(namespace, accountID)
 				c.JSON(http.StatusOK, gin.H{
+					"namespace":   namespace,
 					"accountId":   accountID,
 					"connected":   len(devices) > 0,
 					"deviceCount": len(devices),
@@ -262,9 +266,11 @@ func main() {
 				})
 			})
 			debugWs.GET("/device/:deviceId", func(c *gin.Context) {
+				namespace := c.DefaultQuery("namespace", "")
 				deviceID := c.Param("deviceId")
-				accounts := wsService.GetAccountsByDevice(deviceID)
+				accounts := wsService.GetAccountsByDevice(namespace, deviceID)
 				c.JSON(http.StatusOK, gin.H{
+					"namespace":    namespace,
 					"deviceId":     deviceID,
 					"connected":    len(accounts) > 0,
 					"accountCount": len(accounts),

@@ -11,19 +11,20 @@ import (
 )
 
 type recordingPushPublisher struct {
+	namespace string
 	accountID string
 	deviceIDs []string
 	packet    *gen.DyWebSocketPacket
 	excluded  []string
 }
 
-func (p *recordingPushPublisher) PublishAccount(_ context.Context, accountID string, packet *gen.DyWebSocketPacket, excluded []string) error {
-	p.accountID, p.packet, p.excluded = accountID, packet, excluded
+func (p *recordingPushPublisher) PublishAccount(_ context.Context, namespace, accountID string, packet *gen.DyWebSocketPacket, excluded []string) error {
+	p.namespace, p.accountID, p.packet, p.excluded = namespace, accountID, packet, excluded
 	return nil
 }
 
-func (p *recordingPushPublisher) PublishDevices(_ context.Context, deviceIDs []string, packet *gen.DyWebSocketPacket) error {
-	p.deviceIDs, p.packet = deviceIDs, packet
+func (p *recordingPushPublisher) PublishDevices(_ context.Context, namespace string, deviceIDs []string, packet *gen.DyWebSocketPacket) error {
+	p.namespace, p.deviceIDs, p.packet = namespace, deviceIDs, packet
 	return nil
 }
 
@@ -51,9 +52,10 @@ func TestGRPCService_PushWebSocketPacketPublishesWhenConfigured(t *testing.T) {
 
 func TestGRPCService_GetWebsocketConnectionStatus(t *testing.T) {
 	svc := NewService(Config{}, nil, nil, nil, nil, nil, nil)
-	svc.connections[connectionKey{accountID: "u1", deviceID: "d1"}] = &wsConnection{
-		account:  &gen.DyAccount{Id: "u1"},
-		deviceID: "d1",
+	svc.connections[connectionKey{namespace: svc.cfg.DefaultNamespace, accountID: "u1", deviceID: "d1"}] = &wsConnection{
+		namespace: svc.cfg.DefaultNamespace,
+		account:   &gen.DyAccount{Id: "u1"},
+		deviceID:  "d1",
 	}
 
 	server := NewGRPCService(svc)
@@ -81,9 +83,10 @@ func TestGRPCService_GetWebsocketConnectionStatus(t *testing.T) {
 
 func TestGRPCService_GetWebsocketConnectionStatusBatch(t *testing.T) {
 	svc := NewService(Config{}, nil, nil, nil, nil, nil, nil)
-	svc.connections[connectionKey{accountID: "u1", deviceID: "d1"}] = &wsConnection{
-		account:  &gen.DyAccount{Id: "u1"},
-		deviceID: "d1",
+	svc.connections[connectionKey{namespace: svc.cfg.DefaultNamespace, accountID: "u1", deviceID: "d1"}] = &wsConnection{
+		namespace: svc.cfg.DefaultNamespace,
+		account:   &gen.DyAccount{Id: "u1"},
+		deviceID:  "d1",
 	}
 
 	server := NewGRPCService(svc)
@@ -104,9 +107,10 @@ func TestGRPCService_GetWebsocketConnectionStatusBatch(t *testing.T) {
 
 func TestGRPCService_GetConnectedWebsocketDeviceIds(t *testing.T) {
 	svc := NewService(Config{}, nil, nil, nil, nil, nil, nil)
-	svc.connections[connectionKey{accountID: "u1", deviceID: "d1"}] = &wsConnection{
-		account:  &gen.DyAccount{Id: "u1"},
-		deviceID: "d1",
+	svc.connections[connectionKey{namespace: svc.cfg.DefaultNamespace, accountID: "u1", deviceID: "d1"}] = &wsConnection{
+		namespace: svc.cfg.DefaultNamespace,
+		account:   &gen.DyAccount{Id: "u1"},
+		deviceID:  "d1",
 	}
 
 	server := NewGRPCService(svc)
@@ -123,13 +127,15 @@ func TestGRPCService_GetConnectedWebsocketDeviceIds(t *testing.T) {
 
 func TestGRPCService_GetAllConnectedUserIds(t *testing.T) {
 	svc := NewService(Config{}, nil, nil, nil, nil, nil, nil)
-	svc.connections[connectionKey{accountID: "u2", deviceID: "d2"}] = &wsConnection{
-		account:  &gen.DyAccount{Id: "u2"},
-		deviceID: "d2",
+	svc.connections[connectionKey{namespace: svc.cfg.DefaultNamespace, accountID: "u2", deviceID: "d2"}] = &wsConnection{
+		namespace: svc.cfg.DefaultNamespace,
+		account:   &gen.DyAccount{Id: "u2"},
+		deviceID:  "d2",
 	}
-	svc.connections[connectionKey{accountID: "u1", deviceID: "d1"}] = &wsConnection{
-		account:  &gen.DyAccount{Id: "u1"},
-		deviceID: "d1",
+	svc.connections[connectionKey{namespace: svc.cfg.DefaultNamespace, accountID: "u1", deviceID: "d1"}] = &wsConnection{
+		namespace: svc.cfg.DefaultNamespace,
+		account:   &gen.DyAccount{Id: "u1"},
+		deviceID:  "d1",
 	}
 
 	server := NewGRPCService(svc)
