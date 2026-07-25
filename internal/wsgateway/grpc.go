@@ -31,12 +31,13 @@ func (s *GRPCService) PushWebSocketPacket(ctx context.Context, req *gen.DyPushWe
 	if req.GetPacket() == nil {
 		return nil, status.Error(codes.InvalidArgument, "packet is required")
 	}
+	namespace := req.GetNamespace()
 	if s.pusher != nil {
-		if err := s.pusher.PublishAccount(ctx, "", req.GetUserId(), req.GetPacket(), uniqueTrimmedStrings(req.GetExcludedWebsocketDeviceIds())); err != nil {
+		if err := s.pusher.PublishAccount(ctx, namespace, req.GetUserId(), req.GetPacket(), uniqueTrimmedStrings(req.GetExcludedWebsocketDeviceIds())); err != nil {
 			return nil, status.Errorf(codes.Unavailable, "publish websocket push: %v", err)
 		}
 	} else {
-		s.service.SendPacketToAccountExcept("", req.GetUserId(), req.GetPacket(), req.GetExcludedWebsocketDeviceIds())
+		s.service.SendPacketToAccountExcept(namespace, req.GetUserId(), req.GetPacket(), req.GetExcludedWebsocketDeviceIds())
 	}
 	return &emptypb.Empty{}, nil
 }
@@ -48,13 +49,14 @@ func (s *GRPCService) PushWebSocketPacketToUsers(ctx context.Context, req *gen.D
 	if req.GetPacket() == nil {
 		return nil, status.Error(codes.InvalidArgument, "packet is required")
 	}
+	namespace := req.GetNamespace()
 	for _, userID := range uniqueTrimmedStrings(req.GetUserIds()) {
 		if s.pusher != nil {
-			if err := s.pusher.PublishAccount(ctx, "", userID, req.GetPacket(), nil); err != nil {
+			if err := s.pusher.PublishAccount(ctx, namespace, userID, req.GetPacket(), nil); err != nil {
 				return nil, status.Errorf(codes.Unavailable, "publish websocket push: %v", err)
 			}
 		} else {
-			s.service.SendPacketToAccount("", userID, req.GetPacket())
+			s.service.SendPacketToAccount(namespace, userID, req.GetPacket())
 		}
 	}
 	return &emptypb.Empty{}, nil
@@ -67,12 +69,13 @@ func (s *GRPCService) PushWebSocketPacketToDevice(ctx context.Context, req *gen.
 	if req.GetPacket() == nil {
 		return nil, status.Error(codes.InvalidArgument, "packet is required")
 	}
+	namespace := req.GetNamespace()
 	if s.pusher != nil {
-		if err := s.pusher.PublishDevices(ctx, "", []string{req.GetDeviceId()}, req.GetPacket()); err != nil {
+		if err := s.pusher.PublishDevices(ctx, namespace, []string{req.GetDeviceId()}, req.GetPacket()); err != nil {
 			return nil, status.Errorf(codes.Unavailable, "publish websocket push: %v", err)
 		}
 	} else {
-		s.service.SendPacketToDevice("", req.GetDeviceId(), req.GetPacket())
+		s.service.SendPacketToDevice(namespace, req.GetDeviceId(), req.GetPacket())
 	}
 	return &emptypb.Empty{}, nil
 }
@@ -85,13 +88,14 @@ func (s *GRPCService) PushWebSocketPacketToDevices(ctx context.Context, req *gen
 		return nil, status.Error(codes.InvalidArgument, "packet is required")
 	}
 	deviceIDs := uniqueTrimmedStrings(req.GetDeviceIds())
+	namespace := req.GetNamespace()
 	if s.pusher != nil {
-		if err := s.pusher.PublishDevices(ctx, "", deviceIDs, req.GetPacket()); err != nil {
+		if err := s.pusher.PublishDevices(ctx, namespace, deviceIDs, req.GetPacket()); err != nil {
 			return nil, status.Errorf(codes.Unavailable, "publish websocket push: %v", err)
 		}
 	} else {
 		for _, deviceID := range deviceIDs {
-			s.service.SendPacketToDevice("", deviceID, req.GetPacket())
+			s.service.SendPacketToDevice(namespace, deviceID, req.GetPacket())
 		}
 	}
 	return &emptypb.Empty{}, nil
@@ -122,6 +126,7 @@ func (s *GRPCService) GetWebsocketConnectionStatus(_ context.Context, req *gen.D
 	if req == nil || req.GetId() == nil {
 		return nil, status.Error(codes.InvalidArgument, "id is required")
 	}
+	namespace := req.GetNamespace()
 
 	var connected bool
 	switch id := req.GetId().(type) {
@@ -129,12 +134,12 @@ func (s *GRPCService) GetWebsocketConnectionStatus(_ context.Context, req *gen.D
 		if strings.TrimSpace(id.DeviceId) == "" {
 			return nil, status.Error(codes.InvalidArgument, "device_id is required")
 		}
-		connected = s.service.GetDeviceIsConnected("", id.DeviceId)
+		connected = s.service.GetDeviceIsConnected(namespace, id.DeviceId)
 	case *gen.DyGetWebsocketConnectionStatusRequest_UserId:
 		if strings.TrimSpace(id.UserId) == "" {
 			return nil, status.Error(codes.InvalidArgument, "user_id is required")
 		}
-		connected = s.service.GetAccountIsConnected("", id.UserId)
+		connected = s.service.GetAccountIsConnected(namespace, id.UserId)
 	default:
 		return nil, status.Error(codes.InvalidArgument, "unsupported id type")
 	}
@@ -146,13 +151,14 @@ func (s *GRPCService) GetWebsocketConnectionStatusBatch(_ context.Context, req *
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "request is required")
 	}
+	namespace := req.GetNamespace()
 
 	result := make(map[string]bool, len(req.GetUsersId()))
 	for _, userID := range req.GetUsersId() {
 		if strings.TrimSpace(userID) == "" {
 			continue
 		}
-		result[userID] = s.service.GetAccountIsConnected("", userID)
+		result[userID] = s.service.GetAccountIsConnected(namespace, userID)
 	}
 
 	return &gen.DyGetWebsocketConnectionStatusBatchResponse{IsConnected: result}, nil
@@ -162,15 +168,20 @@ func (s *GRPCService) GetConnectedWebsocketDeviceIds(_ context.Context, req *gen
 	if req == nil || len(req.GetDeviceIds()) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "device_ids is required")
 	}
+	namespace := req.GetNamespace()
 
 	return &gen.DyGetConnectedWebsocketDeviceIdsResponse{
-		DeviceIds: s.service.GetConnectedDeviceIDs("", req.GetDeviceIds()),
+		DeviceIds: s.service.GetConnectedDeviceIDs(namespace, req.GetDeviceIds()),
 	}, nil
 }
 
-func (s *GRPCService) GetAllConnectedUserIds(_ context.Context, _ *emptypb.Empty) (*gen.DyGetAllConnectedUserIdsResponse, error) {
+func (s *GRPCService) GetAllConnectedUserIds(_ context.Context, req *gen.DyGetAllConnectedUserIdsRequest) (*gen.DyGetAllConnectedUserIdsResponse, error) {
+	namespace := ""
+	if req != nil {
+		namespace = req.GetNamespace()
+	}
 	return &gen.DyGetAllConnectedUserIdsResponse{
-		UserIds: s.service.GetAllConnectedUserIDs(""),
+		UserIds: s.service.GetAllConnectedUserIDs(namespace),
 	}, nil
 }
 
@@ -187,9 +198,10 @@ func (s *GRPCService) ReceiveWebSocketPacket(ctx context.Context, req *gen.DyRec
 	if strings.TrimSpace(req.GetDeviceId()) == "" {
 		return nil, status.Error(codes.InvalidArgument, "device_id is required")
 	}
+	namespace := req.GetNamespace()
 
 	packet := packetFromProto(req.GetPacket())
-	if err := s.service.HandlePacket(ctx, req.GetAccount(), "", req.GetDeviceId(), packet); err != nil {
+	if err := s.service.HandlePacket(ctx, req.GetAccount(), namespace, req.GetDeviceId(), packet); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "failed to handle packet: %v", err)
 	}
 
