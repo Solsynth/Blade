@@ -85,6 +85,7 @@ type WebSocketConfig struct {
 	KeepAliveSeconds     int      `mapstructure:"keepAliveSeconds"`
 	MaxMessageBytes      int64    `mapstructure:"maxMessageBytes"`
 	AllowedDeviceAltern  []string `mapstructure:"allowedDeviceAlternatives"`
+	DefaultNamespace     string   `mapstructure:"defaultNamespace"`
 }
 
 type RouteRule struct {

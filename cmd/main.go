@@ -180,6 +180,7 @@ func main() {
 		wsCfg := wsgateway.Config{
 			KeepAliveInterval: time.Duration(cfg.WebSocket.KeepAliveSeconds) * time.Second,
 			MaxMessageBytes:   cfg.WebSocket.MaxMessageBytes,
+			DefaultNamespace:  cfg.WebSocket.DefaultNamespace,
 			AllowedDeviceAlt:  make(map[string]struct{}, len(cfg.WebSocket.AllowedDeviceAltern)),
 		}
 		for _, alt := range cfg.WebSocket.AllowedDeviceAltern {
