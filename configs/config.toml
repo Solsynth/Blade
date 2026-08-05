@@ -28,6 +28,7 @@ zone = { http = "http://localhost:8007", grpc = "localhost:7008" }
 messager = { http = "http://localhost:8008", grpc = "localhost:7009" }
 wallet = { http = "http://localhost:8009", grpc = "localhost:7010" }
 padlock = { http = "http://localhost:8010", grpc = "localhost:7011" }
+stargate = { http = "http://localhost:8080", grpc = "localhost:9090" }
 
 [endpoints]
 serviceNames = [
@@ -64,7 +65,7 @@ clientTlsSkipVerify = false
 [websocket]
 enabled = true
 path = "/ws"
-authService = "padlock"
+authService = "stargate"
 authUseTLS = true
 authTlsSkipVerify = true
 keepAliveSeconds = 60
