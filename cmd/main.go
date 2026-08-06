@@ -22,6 +22,7 @@ import (
 	"google.golang.org/grpc/reflection"
 	dyauth "src.solsynth.dev/sosys/go/pkg/auth"
 	"src.solsynth.dev/sosys/go/pkg/cache"
+	eb "src.solsynth.dev/sosys/go/pkg/eventbus"
 	gen "src.solsynth.dev/sosys/go/proto"
 	"srv.solsynth.dev/sosys/blade/internal/capabilities"
 	"srv.solsynth.dev/sosys/blade/internal/config"
@@ -97,7 +98,7 @@ func main() {
 
 	proxyHandler := proxy.New(cfg, registry)
 	var wsService *wsgateway.Service
-	var natsConn *nats.Conn
+	var natsBus *eb.Bus
 	var wsPushPublisher wsgateway.PushPublisher
 
 	r := gin.New()
@@ -191,16 +192,16 @@ func main() {
 		var eventPublisher wsgateway.ConnectionEventPublisher
 		natsURL := cfg.NATS.URL
 		if natsURL != "" {
-			natsConn, err = connectNATSWithRetry(natsURL)
+			natsBus, err = connectNATSWithRetry(natsURL)
 			if err != nil {
 				logging.Log.Fatal().Err(err).Str("natsURL", natsURL).Msg("Failed to connect to NATS")
 			}
-			natsForwarder := wsgateway.NewNatsForwarder(natsConn, wsgateway.NATSForwarderConfig{
+			natsForwarder := wsgateway.NewNatsForwarder(natsBus.Conn, wsgateway.NATSForwarderConfig{
 				SubjectPrefix: cfg.NATS.WebSocketSubjectPrefix,
 			})
 			forwarder = natsForwarder
 			eventPublisher = natsForwarder
-			wsPushPublisher = wsgateway.NewNATSPushPublisher(natsConn, cfg.NATS.WebSocketSubjectPrefix)
+			wsPushPublisher = wsgateway.NewNATSPushPublisher(natsBus.Conn, cfg.NATS.WebSocketSubjectPrefix)
 			logging.Log.Info().
 				Str("natsURL", natsURL).
 				Str("subjectPrefix", cfg.NATS.WebSocketSubjectPrefix).
@@ -216,11 +217,11 @@ func main() {
 		} else {
 			logging.Log.Warn().Msg("Redis is not configured; websocket presence remains local to each gateway replica")
 		}
-		if natsConn != nil {
-			if _, err := wsgateway.SubscribeWebSocketPushes(natsConn, cfg.NATS.WebSocketSubjectPrefix, wsService); err != nil {
+		if natsBus != nil {
+			if _, err := wsgateway.SubscribeWebSocketPushes(natsBus.Conn, cfg.NATS.WebSocketSubjectPrefix, wsService); err != nil {
 				logging.Log.Fatal().Err(err).Msg("Failed to subscribe to websocket push events")
 			}
-			if _, err := wsgateway.SubscribeAuthSessionRevocations(natsConn, wsService); err != nil {
+			if _, err := wsgateway.SubscribeAuthSessionRevocations(natsBus.Conn, wsService); err != nil {
 				logging.Log.Fatal().Err(err).Msg("Failed to subscribe to auth session revocation events")
 			}
 			logging.Log.Info().
@@ -402,8 +403,8 @@ func main() {
 			grpcSrv.Stop()
 		}
 	}
-	if natsConn != nil {
-		natsConn.Close()
+	if natsBus != nil {
+		natsBus.Conn.Close()
 	}
 	if redisClient != nil {
 		_ = redisClient.Close()
@@ -412,7 +413,7 @@ func main() {
 	logging.Log.Info().Msg("Server exited")
 }
 
-func connectNATSWithRetry(natsURL string) (*nats.Conn, error) {
+func connectNATSWithRetry(natsURL string) (*eb.Bus, error) {
 	normalizedURL := strings.TrimSpace(natsURL)
 	if normalizedURL == "" {
 		return nil, errors.New("nats URL is empty")
@@ -445,11 +446,11 @@ func connectNATSWithRetry(natsURL string) (*nats.Conn, error) {
 	}
 
 	for {
-		conn, err := nats.Connect(normalizedURL, opts...)
+		conn, err := eb.Connect(normalizedURL, opts...)
 		if err == nil {
 			logging.Log.Info().
 				Str("natsURL", normalizedURL).
-				Str("status", conn.Status().String()).
+				Str("status", conn.Conn.Status().String()).
 				Msg("Initialized NATS connection")
 			return conn, nil
 		}
