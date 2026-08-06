@@ -42,6 +42,7 @@ serviceNames = [
   "messager",
   "wallet",
   "padlock",
+  "stargate",
 ]
 coreServiceNames = ["padlock", "passport", "drive", "sphere"]
 
@@ -80,14 +81,32 @@ services = []   # only used when mode = "service"
 
 [[routes]]
 path = "/.well-known/openid-configuration"
-service = "pass"
-target = "/auth/.well-known/openid-configuration"
+service = "stargate"
+target = "/.well-known/openid-configuration"
 prefix = false
 
 [[routes]]
 path = "/.well-known/jwks"
-service = "pass"
-target = "/auth/.well-known/jwks"
+service = "stargate"
+target = "/.well-known/jwks"
+prefix = false
+
+[[routes]]
+path = "/.well-known/webauthn"
+service = "stargate"
+target = "/.well-known/webauthn"
+prefix = false
+
+[[routes]]
+path = "/.well-known/permissions"
+service = "stargate"
+target = "/.well-known/permissions"
+prefix = false
+
+[[routes]]
+path = "/.well-known/error-codes"
+service = "stargate"
+target = "/.well-known/error-codes"
 prefix = false
 
 [[routes]]

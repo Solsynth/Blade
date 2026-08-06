@@ -33,8 +33,8 @@ func TestLoadConfig_SpecialRoutesIncludesWS(t *testing.T) {
 	if cfg.WebSocket.Path != "/ws" {
 		t.Fatalf("expected websocket.path=/ws, got %q", cfg.WebSocket.Path)
 	}
-	if cfg.WebSocket.AuthService != "padlock" {
-		t.Fatalf("expected websocket.authService=padlock, got %q", cfg.WebSocket.AuthService)
+	if cfg.WebSocket.AuthService != "stargate" {
+		t.Fatalf("expected websocket.authService=stargate, got %q", cfg.WebSocket.AuthService)
 	}
 }
 
