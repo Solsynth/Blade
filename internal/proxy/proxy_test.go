@@ -1,8 +1,10 @@
 package proxy
 
 import (
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -106,6 +108,37 @@ func TestProxyRequest_TargetWithPortAndPath(t *testing.T) {
 	}
 	if gotQuery != "take=20&showFediverse=true" {
 		t.Fatalf("expected forwarded query, got %q", gotQuery)
+	}
+}
+
+func TestProxyRequest_ReusesUpstreamConnections(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	var accepted int32
+	upstream := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	upstream.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			atomic.AddInt32(&accepted, 1)
+		}
+	}
+	upstream.Start()
+	defer upstream.Close()
+
+	p := &Proxy{transport: newProxyTransport()}
+	for i := range 20 {
+		rec := &closeNotifyRecorder{ResponseRecorder: httptest.NewRecorder()}
+		ctx, _ := gin.CreateTestContext(rec)
+		ctx.Request = httptest.NewRequest(http.MethodGet, "/sphere/notifications", nil)
+		p.proxyRequest(ctx, upstream.URL+"/api/notifications")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("request %d: expected status 200, got %d", i, rec.Code)
+		}
+	}
+
+	if got := atomic.LoadInt32(&accepted); got != 1 {
+		t.Fatalf("expected one reused upstream connection, got %d", got)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"srv.solsynth.dev/sosys/blade/internal/config"
@@ -19,6 +20,21 @@ type Proxy struct {
 	maintenance config.MaintenanceConfig
 	blockedSet  map[string]struct{}
 	registry    *discovery.Registry
+	transport   http.RoundTripper
+}
+
+var defaultProxyTransport = newProxyTransport()
+
+func newProxyTransport() *http.Transport {
+	return &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 100,
+		IdleConnTimeout:     90 * time.Second,
+	}
 }
 
 func New(cfg *config.Config, registries ...*discovery.Registry) *Proxy {
@@ -35,6 +51,7 @@ func New(cfg *config.Config, registries ...*discovery.Registry) *Proxy {
 		routes:      cfg.Routes,
 		maintenance: cfg.Maintenance,
 		blockedSet:  toServiceSet(cfg.Maintenance.Services),
+		transport:   newProxyTransport(),
 	}
 	if len(registries) > 0 {
 		p.registry = registries[0]
@@ -296,13 +313,14 @@ func (p *Proxy) proxyRequest(c *gin.Context, target string) {
 			Msg("Proxying request")
 	}
 
+	transport := p.transport
+	if transport == nil {
+		transport = defaultProxyTransport
+	}
+
 	proxy := &httputil.ReverseProxy{
-		Director: director,
-		Transport: &http.Transport{
-			DialContext: (&net.Dialer{
-				Timeout: 30 * 1000000000,
-			}).DialContext,
-		},
+		Director:  director,
+		Transport: transport,
 	}
 
 	proxy.ServeHTTP(c.Writer, c.Request)
