@@ -3,14 +3,30 @@ package wsgateway
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+	"golang.org/x/net/websocket"
+	"google.golang.org/protobuf/types/known/timestamppb"
 	dyauth "src.solsynth.dev/sosys/go/pkg/auth"
 	gen "src.solsynth.dev/sosys/go/proto"
-	"github.com/google/uuid"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
+
+func testWSConn(t *testing.T) *websocket.Conn {
+	t.Helper()
+	srv := httptest.NewServer(websocket.Server{Handler: func(*websocket.Conn) {}})
+	t.Cleanup(srv.Close)
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	conn, err := websocket.Dial(wsURL, "", "http://test/")
+	if err != nil {
+		t.Fatalf("failed to dial test websocket: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	return conn
+}
 
 type stubTokenAuthenticator struct {
 	result    *dyauth.AuthResult
@@ -134,6 +150,47 @@ func TestServiceGetAccountConnections_ExcludesDeviceIDs(t *testing.T) {
 	}
 	if got[0].deviceID != "d1" {
 		t.Fatalf("expected d1 to receive packet, got %q", got[0].deviceID)
+	}
+}
+
+func TestServiceSendPacketToAccountsExcept_SelectsAllMatchingConnections(t *testing.T) {
+	svc := NewService(Config{}, nil, nil, nil, nil, nil, nil)
+	for _, c := range []struct {
+		acct string
+		dev  string
+	}{
+		{"u1", "d1"}, {"u1", "d2"}, {"u2", "d3"},
+	} {
+		svc.connections[connectionKey{namespace: svc.cfg.DefaultNamespace, accountID: c.acct, deviceID: c.dev}] = &wsConnection{
+			namespace: svc.cfg.DefaultNamespace,
+			account:   &gen.DyAccount{Id: c.acct},
+			deviceID:  c.dev,
+			conn:      testWSConn(t),
+			outbound:  make(chan Packet, outboundQueueSize),
+			priority:  make(chan Packet, priorityQueueSize),
+			done:      make(chan struct{}),
+		}
+	}
+
+	packet := &gen.DyWebSocketPacket{Type: "messages.new"}
+	svc.SendPacketToAccountsExcept(svc.cfg.DefaultNamespace, []string{" u1 ", "", "u1", "u2"}, packet, []string{"d2"})
+
+	got := map[string]int{}
+	for key, conn := range svc.connections {
+		got[key.deviceID] = len(conn.outbound)
+	}
+	if got["d1"] != 1 {
+		t.Fatalf("expected d1 to have 1 packet, got %d", got["d1"])
+	}
+	if got["d2"] != 0 {
+		t.Fatalf("expected excluded d2 to have 0 packets, got %d", got["d2"])
+	}
+	if got["d3"] != 1 {
+		t.Fatalf("expected d3 to have 1 packet, got %d", got["d3"])
+	}
+
+	for _, conn := range svc.connections {
+		close(conn.done)
 	}
 }
 

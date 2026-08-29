@@ -675,29 +675,52 @@ func (s *Service) SendPacketToAccount(namespace, accountID string, packet *gen.D
 }
 
 func (s *Service) SendPacketToAccountExcept(namespace, accountID string, packet *gen.DyWebSocketPacket, excludedDeviceIDs []string) {
+	s.SendPacketToAccountsExcept(namespace, []string{accountID}, packet, excludedDeviceIDs)
+}
+
+func (s *Service) SendPacketToAccountsExcept(namespace string, accountIDs []string, packet *gen.DyWebSocketPacket, excludedDeviceIDs []string) {
 	if namespace == "" {
 		namespace = s.cfg.DefaultNamespace
 	}
-	entries := s.getAccountConnections(namespace, accountID, excludedDeviceIDs)
-	excluded := uniqueTrimmedStrings(excludedDeviceIDs)
+	excluded := makeDeviceIDSet(excludedDeviceIDs)
+	targets := make(map[string]struct{}, len(accountIDs))
+	for _, accountID := range uniqueTrimmedStrings(accountIDs) {
+		targets[accountID] = struct{}{}
+	}
+
+	s.mu.RLock()
+	entries := make([]*wsConnection, 0)
+	for key, entry := range s.connections {
+		if key.namespace != namespace {
+			continue
+		}
+		if _, ok := targets[key.accountID]; !ok {
+			continue
+		}
+		if _, skip := excluded[entry.deviceID]; skip {
+			continue
+		}
+		entries = append(entries, entry)
+	}
+	s.mu.RUnlock()
 
 	logging.Log.Debug().
 		Str("namespace", namespace).
-		Str("accountId", accountID).
 		Str("packetType", packet.GetType()).
-		Strs("excludedDeviceIds", excluded).
+		Strs("accountIds", uniqueTrimmedStrings(accountIDs)).
+		Strs("excludedDeviceIds", excludedDeviceIDs).
 		Int("targetCount", len(entries)).
 		Msg("Selected websocket account push targets")
 
 	for _, entry := range entries {
 		logging.Log.Debug().
 			Str("namespace", namespace).
-			Str("accountId", accountID).
+			Str("accountId", entry.getAccountID()).
 			Str("deviceId", entry.deviceID).
 			Str("packetType", packet.GetType()).
 			Msg("Sending websocket packet to account connection")
 		if err := entry.sendProto(packet); err != nil {
-			logging.Log.Warn().Err(err).Str("namespace", namespace).Str("accountId", accountID).Str("deviceId", entry.deviceID).Msg("Failed to send packet to account connection")
+			logging.Log.Warn().Err(err).Str("namespace", namespace).Str("accountId", entry.getAccountID()).Str("deviceId", entry.deviceID).Msg("Failed to send packet to account connection")
 		}
 	}
 }

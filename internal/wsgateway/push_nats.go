@@ -79,9 +79,7 @@ func SubscribeWebSocketPushes(conn *nats.Conn, subjectPrefix string, svc *Servic
 		}
 		switch event.Target {
 		case "account":
-			for _, accountID := range uniqueTrimmedStrings(event.IDs) {
-				svc.SendPacketToAccountExcept(namespace, accountID, &packet, event.ExcludedDeviceIDs)
-			}
+			svc.SendPacketToAccountsExcept(namespace, event.IDs, &packet, event.ExcludedDeviceIDs)
 		case "device":
 			for _, deviceID := range uniqueTrimmedStrings(event.IDs) {
 				svc.SendPacketToDevice(namespace, deviceID, &packet)
