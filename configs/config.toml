@@ -62,6 +62,11 @@ writeTimeout = 60
 enabled = true
 port = "7001"
 clientTlsSkipVerify = false
+# Serve the gRPC endpoint over TLS with the fleet's self-signed certs
+# (Stargate and the C# clients dial with certificate validation skipped).
+# useTLS = true
+# certFile = "/etc/tls/blade/grpc/server.crt"
+# keyFile = "/etc/tls/blade/grpc/server.key"
 
 [websocket]
 enabled = true

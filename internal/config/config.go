@@ -69,6 +69,9 @@ type GrpcServerConfig struct {
 	Enabled             bool   `mapstructure:"enabled"`
 	Port                string `mapstructure:"port"`
 	ClientTLSSkipVerify bool   `mapstructure:"clientTlsSkipVerify"`
+	UseTLS              bool   `mapstructure:"useTLS"`
+	CertFile            string `mapstructure:"certFile"`
+	KeyFile             string `mapstructure:"keyFile"`
 }
 
 type WebSocketConfig struct {
@@ -116,6 +119,9 @@ func Load(configPath string) (*Config, error) {
 	viper.SetDefault("grpc.enabled", true)
 	viper.SetDefault("grpc.port", "7001")
 	viper.SetDefault("grpc.clientTlsSkipVerify", false)
+	viper.SetDefault("grpc.useTLS", false)
+	viper.SetDefault("grpc.certFile", "")
+	viper.SetDefault("grpc.keyFile", "")
 	viper.SetDefault("siteUrl", "http://localhost:3000")
 
 	viper.SetDefault("cache.serializer", "JSON")
@@ -181,11 +187,19 @@ func applyLegacyAliases() {
 }
 
 func hasNewGRPCConfig() bool {
-	return viper.InConfig("grpc.enabled") || viper.InConfig("grpc.port")
+	return viper.InConfig("grpc.enabled") ||
+		viper.InConfig("grpc.port") ||
+		viper.InConfig("grpc.useTLS") ||
+		viper.InConfig("grpc.certFile") ||
+		viper.InConfig("grpc.keyFile")
 }
 
 func hasLegacyGRPCConfig() bool {
-	return viper.InConfig("grpcServer.enabled") || viper.InConfig("grpcServer.port")
+	return viper.InConfig("grpcServer.enabled") ||
+		viper.InConfig("grpcServer.port") ||
+		viper.InConfig("grpcServer.useTLS") ||
+		viper.InConfig("grpcServer.certFile") ||
+		viper.InConfig("grpcServer.keyFile")
 }
 
 func hasNewWebSocketConfig() bool {
