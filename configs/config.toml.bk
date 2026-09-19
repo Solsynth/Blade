@@ -37,7 +37,6 @@ path = "/ws"
 authService = "pass"
 keepAliveSeconds = 60
 maxMessageBytes = 4096
-allowedDeviceAlternatives = ["watch"]
 
 [[specialRoutes.routes]]
 path = "/.well-known/openid-configuration"

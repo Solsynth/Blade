@@ -185,6 +185,30 @@ func (s *GRPCService) GetAllConnectedUserIds(_ context.Context, req *gen.DyGetAl
 	}, nil
 }
 
+func (s *GRPCService) GetUserConnectedWebsocketDeviceIds(_ context.Context, req *gen.DyGetUserConnectedWebsocketDeviceIdsRequest) (*gen.DyGetUserConnectedWebsocketDeviceIdsResponse, error) {
+	if req == nil || strings.TrimSpace(req.GetUserId()) == "" {
+		return nil, status.Error(codes.InvalidArgument, "user_id is required")
+	}
+
+	return &gen.DyGetUserConnectedWebsocketDeviceIdsResponse{
+		DeviceIds: s.service.GetUserConnectedDeviceIDs(req.GetNamespace(), strings.TrimSpace(req.GetUserId())),
+	}, nil
+}
+
+func (s *GRPCService) GetUsersConnectedWebsocketDeviceIds(_ context.Context, req *gen.DyGetUsersConnectedWebsocketDeviceIdsRequest) (*gen.DyGetUsersConnectedWebsocketDeviceIdsResponse, error) {
+	if req == nil || len(req.GetUserIds()) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "user_ids is required")
+	}
+
+	deviceIDs := s.service.GetUsersConnectedDeviceIDs(req.GetNamespace(), uniqueTrimmedStrings(req.GetUserIds()))
+	devices := make(map[string]*gen.DyWebsocketDeviceIdList, len(deviceIDs))
+	for accountID, ids := range deviceIDs {
+		devices[accountID] = &gen.DyWebsocketDeviceIdList{DeviceIds: ids}
+	}
+
+	return &gen.DyGetUsersConnectedWebsocketDeviceIdsResponse{Devices: devices}, nil
+}
+
 func (s *GRPCService) ReceiveWebSocketPacket(ctx context.Context, req *gen.DyReceiveWebSocketPacketRequest) (*emptypb.Empty, error) {
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "request is required")

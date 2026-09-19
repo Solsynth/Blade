@@ -66,7 +66,6 @@ enabled = true
 path = "/ws"
 keepAliveSeconds = 60
 maxMessageBytes = 4096
-allowedDeviceAlternatives = ["watch"]
 
 [maintenance]
 enabled = false

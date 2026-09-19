@@ -37,6 +37,13 @@ type accountPresenceLister interface {
 	ActiveAccountIDs(context.Context, string) ([]string, error)
 }
 
+// accountDeviceLister is an optional presence-store capability: stores that
+// only track connections keep compiling without the account→device index.
+type accountDeviceLister interface {
+	AccountDeviceIDs(context.Context, string, string) ([]string, error)
+	AccountsDeviceIDs(context.Context, string, []string) (map[string][]string, error)
+}
+
 type SessionAuthContext struct {
 	Account   *gen.DyAccount
 	Session   *gen.DyAuthSession
@@ -47,7 +54,6 @@ type SessionAuthContext struct {
 type Config struct {
 	KeepAliveInterval time.Duration
 	MaxMessageBytes   int64
-	AllowedDeviceAlt  map[string]struct{}
 	Namespaces        map[string]NamespaceConfig
 	DefaultNamespace  string
 }
@@ -55,7 +61,6 @@ type Config struct {
 type NamespaceConfig struct {
 	KeepAliveInterval time.Duration
 	MaxMessageBytes   int64
-	AllowedDeviceAlt  map[string]struct{}
 }
 
 type connectionKey struct {
@@ -136,9 +141,6 @@ func NewService(cfg Config, handlers []PacketHandler, forwarder UnknownPacketFor
 	if cfg.MaxMessageBytes <= 0 {
 		cfg.MaxMessageBytes = 4 * 1024
 	}
-	if cfg.AllowedDeviceAlt == nil {
-		cfg.AllowedDeviceAlt = map[string]struct{}{"watch": {}}
-	}
 	if cfg.Namespaces == nil {
 		cfg.Namespaces = make(map[string]NamespaceConfig)
 	}
@@ -149,7 +151,6 @@ func NewService(cfg Config, handlers []PacketHandler, forwarder UnknownPacketFor
 		cfg.Namespaces[cfg.DefaultNamespace] = NamespaceConfig{
 			KeepAliveInterval: cfg.KeepAliveInterval,
 			MaxMessageBytes:   cfg.MaxMessageBytes,
-			AllowedDeviceAlt:  cfg.AllowedDeviceAlt,
 		}
 	}
 
@@ -173,15 +174,11 @@ func (s *Service) resolveNamespaceConfig(namespace string) NamespaceConfig {
 		if ns.MaxMessageBytes <= 0 {
 			ns.MaxMessageBytes = s.cfg.MaxMessageBytes
 		}
-		if ns.AllowedDeviceAlt == nil {
-			ns.AllowedDeviceAlt = s.cfg.AllowedDeviceAlt
-		}
 		return ns
 	}
 	return NamespaceConfig{
 		KeepAliveInterval: s.cfg.KeepAliveInterval,
 		MaxMessageBytes:   s.cfg.MaxMessageBytes,
-		AllowedDeviceAlt:  s.cfg.AllowedDeviceAlt,
 	}
 }
 
@@ -614,6 +611,100 @@ func (s *Service) GetAllConnectedDeviceIDs(namespace string) []string {
 	return out
 }
 
+// GetUserConnectedDeviceIDs returns the device IDs the account currently has
+// live websocket connections from. Cross-replica when a presence store is
+// configured; otherwise only this replica's connections are visible.
+func (s *Service) GetUserConnectedDeviceIDs(namespace, accountID string) []string {
+	if namespace == "" {
+		namespace = s.cfg.DefaultNamespace
+	}
+	accountID = strings.TrimSpace(accountID)
+	if accountID == "" {
+		return nil
+	}
+	if lister, ok := s.presence.(accountDeviceLister); ok {
+		if deviceIDs, err := lister.AccountDeviceIDs(context.Background(), namespace, accountID); err == nil {
+			if deviceIDs == nil {
+				return []string{}
+			}
+			return deviceIDs
+		}
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	seen := make(map[string]struct{})
+	for key := range s.connections {
+		if key.namespace == namespace && key.accountID == accountID && key.deviceID != "" {
+			seen[key.deviceID] = struct{}{}
+		}
+	}
+
+	out := make([]string, 0, len(seen))
+	for deviceID := range seen {
+		out = append(out, deviceID)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// GetUsersConnectedDeviceIDs returns the same per account. The map always has
+// an entry for every requested (trimmed, deduped, non-blank) account.
+func (s *Service) GetUsersConnectedDeviceIDs(namespace string, accountIDs []string) map[string][]string {
+	if namespace == "" {
+		namespace = s.cfg.DefaultNamespace
+	}
+	requested := uniqueTrimmedStrings(accountIDs)
+	out := make(map[string][]string, len(requested))
+	if len(requested) == 0 {
+		return out
+	}
+
+	if lister, ok := s.presence.(accountDeviceLister); ok {
+		if devices, err := lister.AccountsDeviceIDs(context.Background(), namespace, requested); err == nil {
+			for _, accountID := range requested {
+				deviceIDs := devices[accountID]
+				if deviceIDs == nil {
+					deviceIDs = []string{}
+				}
+				out[accountID] = deviceIDs
+			}
+			return out
+		}
+	}
+
+	requestedSet := make(map[string]struct{}, len(requested))
+	for _, accountID := range requested {
+		requestedSet[accountID] = struct{}{}
+	}
+
+	s.mu.RLock()
+	seen := make(map[string]map[string]struct{}, len(requested))
+	for key := range s.connections {
+		if key.namespace != namespace || key.deviceID == "" {
+			continue
+		}
+		if _, ok := requestedSet[key.accountID]; !ok {
+			continue
+		}
+		if seen[key.accountID] == nil {
+			seen[key.accountID] = make(map[string]struct{})
+		}
+		seen[key.accountID][key.deviceID] = struct{}{}
+	}
+	s.mu.RUnlock()
+
+	for _, accountID := range requested {
+		deviceIDs := make([]string, 0, len(seen[accountID]))
+		for deviceID := range seen[accountID] {
+			deviceIDs = append(deviceIDs, deviceID)
+		}
+		sort.Strings(deviceIDs)
+		out[accountID] = deviceIDs
+	}
+	return out
+}
+
 func (s *Service) GetConnectionSnapshots() []ConnectionSnapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -937,16 +1028,11 @@ func (s *Service) HandleConnection(ctx context.Context, auth SessionAuthContext,
 
 func (s *Service) normalizeDeviceID(deviceID string) string {
 	trimmed := strings.TrimSpace(deviceID)
-	if trimmed != "" && !strings.HasPrefix(trimmed, "+") {
+	if trimmed != "" {
 		return trimmed
 	}
 
-	suffix := ""
-	if strings.HasPrefix(trimmed, "+") {
-		suffix = trimmed
-	}
-
-	generated := uuid.NewString() + suffix
+	generated := uuid.NewString()
 	logging.Log.Warn().Str("deviceId", generated).Msg("Missing websocket client_id; generated UUID fallback")
 	return generated
 }

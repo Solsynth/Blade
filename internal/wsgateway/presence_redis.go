@@ -47,6 +47,9 @@ func (p *RedisPresenceStore) deviceKey(namespace, deviceID string) string {
 func (p *RedisPresenceStore) accountsKey(namespace string) string {
 	return p.prefix + ":ns:" + namespace + ":accounts"
 }
+func (p *RedisPresenceStore) accountDevicesKey(namespace, accountID string) string {
+	return p.prefix + ":ns:" + namespace + ":account-devices:" + accountID
+}
 
 func (p *RedisPresenceStore) Register(ctx context.Context, namespace, accountID, deviceID, connectionID string) error {
 	return p.touch(ctx, namespace, accountID, deviceID, connectionID)
@@ -69,11 +72,15 @@ func (p *RedisPresenceStore) touch(ctx context.Context, namespace, accountID, de
 	pipe.ZAdd(ctx, p.accountKey(namespace, accountID), redis.Z{Score: expiresAt, Member: member})
 	pipe.ZAdd(ctx, p.deviceKey(namespace, deviceID), redis.Z{Score: expiresAt, Member: member})
 	pipe.ZAdd(ctx, p.accountsKey(namespace), redis.Z{Score: expiresAt, Member: accountID})
+	// The per-account device index is keyed by device (not connection) so a
+	// device holding several sockets stays a single entry.
+	pipe.ZAdd(ctx, p.accountDevicesKey(namespace, accountID), redis.Z{Score: expiresAt, Member: deviceID})
 	// The scores are the authoritative per-connection lease. Key expiry also
 	// bounds Redis memory for identities that are never queried again.
 	pipe.Expire(ctx, p.accountKey(namespace, accountID), 2*p.ttl)
 	pipe.Expire(ctx, p.deviceKey(namespace, deviceID), 2*p.ttl)
 	pipe.Expire(ctx, p.accountsKey(namespace), 2*p.ttl)
+	pipe.Expire(ctx, p.accountDevicesKey(namespace, accountID), 2*p.ttl)
 	_, err := pipe.Exec(ctx)
 	return err
 }
@@ -82,11 +89,23 @@ func (p *RedisPresenceStore) Remove(ctx context.Context, namespace, accountID, d
 	if p == nil || p.client == nil {
 		return nil
 	}
+	// A device entry must survive as long as any of its connections does: the
+	// deferred removal of a replaced connection would otherwise evict a device
+	// that is still online, so only drop it once its last live socket is gone.
+	now := time.Now().UnixMilli()
+	deviceKey := p.deviceKey(namespace, deviceID)
 	pipe := p.client.Pipeline()
+	pipe.ZRemRangeByScore(ctx, deviceKey, "-inf", fmt.Sprintf("%d", now))
 	pipe.ZRem(ctx, p.accountKey(namespace, accountID), connectionID)
-	pipe.ZRem(ctx, p.deviceKey(namespace, deviceID), connectionID)
-	_, err := pipe.Exec(ctx)
-	return err
+	pipe.ZRem(ctx, deviceKey, connectionID)
+	remaining := pipe.ZCount(ctx, deviceKey, fmt.Sprintf("(%d", now), "+inf")
+	if _, err := pipe.Exec(ctx); err != nil {
+		return err
+	}
+	if remaining.Val() == 0 {
+		return p.client.ZRem(ctx, p.accountDevicesKey(namespace, accountID), deviceID).Err()
+	}
+	return nil
 }
 
 func (p *RedisPresenceStore) AccountConnected(ctx context.Context, namespace, accountID string) (bool, error) {
@@ -125,6 +144,89 @@ func (p *RedisPresenceStore) DevicesConnected(ctx context.Context, namespace str
 		connected[deviceID] = count.Val() > 0
 	}
 	return connected, nil
+}
+
+// AccountDeviceIDs returns the device IDs the account currently has live
+// connections from, sorted. It is empty when the account is offline.
+func (p *RedisPresenceStore) AccountDeviceIDs(ctx context.Context, namespace, accountID string) ([]string, error) {
+	accountID = strings.TrimSpace(accountID)
+	if accountID == "" {
+		return nil, nil
+	}
+	if p == nil || p.client == nil {
+		return nil, nil
+	}
+
+	key := p.accountDevicesKey(namespace, accountID)
+	now := time.Now().UnixMilli()
+	pipe := p.client.TxPipeline()
+	pipe.ZRemRangeByScore(ctx, key, "-inf", fmt.Sprintf("%d", now))
+	members := pipe.ZRangeByScore(ctx, key, &redis.ZRangeBy{Min: fmt.Sprintf("(%d", now), Max: "+inf"})
+	if _, err := pipe.Exec(ctx); err != nil {
+		return nil, err
+	}
+
+	deviceIDs := make([]string, 0, len(members.Val()))
+	for _, deviceID := range members.Val() {
+		deviceID = strings.TrimSpace(deviceID)
+		if deviceID != "" {
+			deviceIDs = append(deviceIDs, deviceID)
+		}
+	}
+	sort.Strings(deviceIDs)
+	return deviceIDs, nil
+}
+
+// AccountsDeviceIDs returns the same per account in a single round trip. The
+// result always has an entry for every requested (trimmed, deduped, non-blank)
+// account, empty when that account is offline.
+func (p *RedisPresenceStore) AccountsDeviceIDs(ctx context.Context, namespace string, accountIDs []string) (map[string][]string, error) {
+	requested := make([]string, 0, len(accountIDs))
+	requestedSet := make(map[string]struct{}, len(accountIDs))
+	for _, accountID := range accountIDs {
+		accountID = strings.TrimSpace(accountID)
+		if accountID == "" {
+			continue
+		}
+		if _, ok := requestedSet[accountID]; ok {
+			continue
+		}
+		requestedSet[accountID] = struct{}{}
+		requested = append(requested, accountID)
+	}
+
+	devices := make(map[string][]string, len(requested))
+	for _, accountID := range requested {
+		devices[accountID] = []string{}
+	}
+	if p == nil || p.client == nil || len(requested) == 0 {
+		return devices, nil
+	}
+
+	now := time.Now().UnixMilli()
+	pipe := p.client.TxPipeline()
+	members := make(map[string]*redis.StringSliceCmd, len(requested))
+	for _, accountID := range requested {
+		key := p.accountDevicesKey(namespace, accountID)
+		pipe.ZRemRangeByScore(ctx, key, "-inf", fmt.Sprintf("%d", now))
+		members[accountID] = pipe.ZRangeByScore(ctx, key, &redis.ZRangeBy{Min: fmt.Sprintf("(%d", now), Max: "+inf"})
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		return nil, err
+	}
+
+	for _, accountID := range requested {
+		deviceIDs := make([]string, 0, len(members[accountID].Val()))
+		for _, deviceID := range members[accountID].Val() {
+			deviceID = strings.TrimSpace(deviceID)
+			if deviceID != "" {
+				deviceIDs = append(deviceIDs, deviceID)
+			}
+		}
+		sort.Strings(deviceIDs)
+		devices[accountID] = deviceIDs
+	}
+	return devices, nil
 }
 
 func (p *RedisPresenceStore) ActiveAccountIDs(ctx context.Context, namespace string) ([]string, error) {

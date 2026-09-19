@@ -71,7 +71,6 @@ authUseTLS = true
 authTlsSkipVerify = true
 keepAliveSeconds = 60
 maxMessageBytes = 4096
-allowedDeviceAlternatives = ["watch"]
 defaultNamespace = "dev.solsynth.solian"
 
 [maintenance]

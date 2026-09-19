@@ -45,21 +45,6 @@ func (h *HttpHandler) Handle(c *gin.Context) {
 		namespace = h.cfg.DefaultNamespace
 	}
 
-	deviceAlt := c.Query("deviceAlt")
-	if deviceAlt != "" {
-		nsCfg := h.resolveNamespaceConfig(namespace)
-		if _, ok := nsCfg.AllowedDeviceAlt[deviceAlt]; !ok {
-			logging.Log.Warn().
-				Str("path", requestPath).
-				Str("origin", requestOrigin).
-				Str("namespace", namespace).
-				Str("deviceAlt", deviceAlt).
-				Msg("Rejected websocket request due to unsupported deviceAlt")
-			c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported deviceAlt"})
-			return
-		}
-	}
-
 	auth, err := dyauth.AuthenticateRequest(c.Request.Context(), h.authenticator, c.Request)
 	if err != nil {
 		logging.Log.Warn().
@@ -78,9 +63,6 @@ func (h *HttpHandler) Handle(c *gin.Context) {
 	_ = dyauth.HydrateAndTouch(c.Request.Context(), h.cache, h.profiles, auth)
 
 	deviceID := auth.Session.GetClientId()
-	if deviceAlt != "" {
-		deviceID = deviceID + "+" + deviceAlt
-	}
 
 	server := websocket.Server{
 		Handshake: func(cfg *websocket.Config, req *http.Request) error {
@@ -123,24 +105,4 @@ func (h *HttpHandler) Handle(c *gin.Context) {
 		Str("accountId", auth.Account.GetId()).
 		Str("deviceId", deviceID).
 		Msg("Websocket handler completed")
-}
-
-func (h *HttpHandler) resolveNamespaceConfig(namespace string) NamespaceConfig {
-	if ns, ok := h.cfg.Namespaces[namespace]; ok {
-		if ns.KeepAliveInterval <= 0 {
-			ns.KeepAliveInterval = h.cfg.KeepAliveInterval
-		}
-		if ns.MaxMessageBytes <= 0 {
-			ns.MaxMessageBytes = h.cfg.MaxMessageBytes
-		}
-		if ns.AllowedDeviceAlt == nil {
-			ns.AllowedDeviceAlt = h.cfg.AllowedDeviceAlt
-		}
-		return ns
-	}
-	return NamespaceConfig{
-		KeepAliveInterval: h.cfg.KeepAliveInterval,
-		MaxMessageBytes:   h.cfg.MaxMessageBytes,
-		AllowedDeviceAlt:  h.cfg.AllowedDeviceAlt,
-	}
 }

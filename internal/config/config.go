@@ -72,20 +72,19 @@ type GrpcServerConfig struct {
 }
 
 type WebSocketConfig struct {
-	Enabled              bool     `mapstructure:"enabled"`
-	Path                 string   `mapstructure:"path"`
-	AuthService          string   `mapstructure:"authService"`
-	AuthUseTLS           bool     `mapstructure:"authUseTLS"`
-	AuthTLSSkipVerify    bool     `mapstructure:"authTlsSkipVerify"`
-	AuthTLSServerName    string   `mapstructure:"authTlsServerName"`
-	ProfileService       string   `mapstructure:"profileService"`
-	ProfileUseTLS        bool     `mapstructure:"profileUseTLS"`
-	ProfileTLSSkipVerify bool     `mapstructure:"profileTlsSkipVerify"`
-	ProfileTLSServerName string   `mapstructure:"profileTlsServerName"`
-	KeepAliveSeconds     int      `mapstructure:"keepAliveSeconds"`
-	MaxMessageBytes      int64    `mapstructure:"maxMessageBytes"`
-	AllowedDeviceAltern  []string `mapstructure:"allowedDeviceAlternatives"`
-	DefaultNamespace     string   `mapstructure:"defaultNamespace"`
+	Enabled              bool   `mapstructure:"enabled"`
+	Path                 string `mapstructure:"path"`
+	AuthService          string `mapstructure:"authService"`
+	AuthUseTLS           bool   `mapstructure:"authUseTLS"`
+	AuthTLSSkipVerify    bool   `mapstructure:"authTlsSkipVerify"`
+	AuthTLSServerName    string `mapstructure:"authTlsServerName"`
+	ProfileService       string `mapstructure:"profileService"`
+	ProfileUseTLS        bool   `mapstructure:"profileUseTLS"`
+	ProfileTLSSkipVerify bool   `mapstructure:"profileTlsSkipVerify"`
+	ProfileTLSServerName string `mapstructure:"profileTlsServerName"`
+	KeepAliveSeconds     int    `mapstructure:"keepAliveSeconds"`
+	MaxMessageBytes      int64  `mapstructure:"maxMessageBytes"`
+	DefaultNamespace     string `mapstructure:"defaultNamespace"`
 }
 
 type RouteRule struct {
@@ -139,7 +138,6 @@ func Load(configPath string) (*Config, error) {
 	viper.SetDefault("websocket.profileTlsServerName", "")
 	viper.SetDefault("websocket.keepAliveSeconds", 60)
 	viper.SetDefault("websocket.maxMessageBytes", 4096)
-	viper.SetDefault("websocket.allowedDeviceAlternatives", []string{"watch"})
 	viper.SetDefault("maintenance.enabled", false)
 	viper.SetDefault("maintenance.mode", "full")
 	viper.SetDefault("maintenance.services", []string{})
@@ -198,8 +196,7 @@ func hasNewWebSocketConfig() bool {
 		viper.InConfig("websocket.authTlsSkipVerify") ||
 		viper.InConfig("websocket.authTlsServerName") ||
 		viper.InConfig("websocket.keepAliveSeconds") ||
-		viper.InConfig("websocket.maxMessageBytes") ||
-		viper.InConfig("websocket.allowedDeviceAlternatives")
+		viper.InConfig("websocket.maxMessageBytes")
 }
 
 func hasLegacyWebSocketConfig() bool {
@@ -210,8 +207,7 @@ func hasLegacyWebSocketConfig() bool {
 		viper.InConfig("websocketGateway.authTlsSkipVerify") ||
 		viper.InConfig("websocketGateway.authTlsServerName") ||
 		viper.InConfig("websocketGateway.keepAliveSeconds") ||
-		viper.InConfig("websocketGateway.maxMessageBytes") ||
-		viper.InConfig("websocketGateway.allowedDeviceAlternatives")
+		viper.InConfig("websocketGateway.maxMessageBytes")
 }
 
 func hasNewRoutesConfig() bool {

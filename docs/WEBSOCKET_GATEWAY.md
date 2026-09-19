@@ -29,18 +29,15 @@ The wsgateway supports namespace-based multi-tenancy, allowing isolated connecti
 wsgateway.Config{
     KeepAliveInterval: 60 * time.Second, // fallback for namespaces without override
     MaxMessageBytes:   4 * 1024,
-    AllowedDeviceAlt:  map[string]struct{}{"watch": {}},
     DefaultNamespace:  "_default",
     Namespaces: map[string]wsgateway.NamespaceConfig{
         "_default": {
             KeepAliveInterval: 60 * time.Second,
             MaxMessageBytes:   4 * 1024,
-            AllowedDeviceAlt:  map[string]struct{}{"watch": {}},
         },
         "mobile-app": {
             KeepAliveInterval: 30 * time.Second,
             MaxMessageBytes:   8 * 1024,
-            AllowedDeviceAlt:  map[string]struct{}{},
         },
     },
 }
@@ -54,7 +51,6 @@ Per-namespace config fields override the top-level fallback. Any field left at z
 |---|---|
 | `KeepAliveInterval` | Presence refresh interval. Affects how long a stale connection survives without a heartbeat. |
 | `MaxMessageBytes` | Maximum inbound packet size for connections in this namespace. |
-| `AllowedDeviceAlt` | Allowed `deviceAlt` query param values for HTTP connections in this namespace. |
 
 ## HTTP Connection
 

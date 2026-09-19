@@ -163,6 +163,77 @@ func TestGRPCService_ReceiveWebSocketPacket_Validation(t *testing.T) {
 	}
 }
 
+func TestGRPCService_GetUserConnectedWebsocketDeviceIds(t *testing.T) {
+	svc := NewService(Config{}, nil, nil, nil, nil, nil, nil)
+	for _, deviceID := range []string{"d2", "d1"} {
+		svc.connections[connectionKey{namespace: svc.cfg.DefaultNamespace, accountID: "u1", deviceID: deviceID}] = &wsConnection{
+			namespace: svc.cfg.DefaultNamespace,
+			account:   &gen.DyAccount{Id: "u1"},
+			deviceID:  deviceID,
+		}
+	}
+
+	server := NewGRPCService(svc)
+	resp, err := server.GetUserConnectedWebsocketDeviceIds(context.Background(), &gen.DyGetUserConnectedWebsocketDeviceIdsRequest{
+		UserId: " u1 ",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !reflect.DeepEqual(resp.GetDeviceIds(), []string{"d1", "d2"}) {
+		t.Fatalf("expected sorted devices [d1 d2], got %#v", resp.GetDeviceIds())
+	}
+
+	if _, err := server.GetUserConnectedWebsocketDeviceIds(context.Background(), &gen.DyGetUserConnectedWebsocketDeviceIdsRequest{}); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("expected invalid argument for blank user_id, got %v", err)
+	}
+}
+
+func TestGRPCService_GetUsersConnectedWebsocketDeviceIds(t *testing.T) {
+	svc := NewService(Config{}, nil, nil, nil, nil, nil, nil)
+	svc.connections[connectionKey{namespace: svc.cfg.DefaultNamespace, accountID: "u1", deviceID: "d2"}] = &wsConnection{
+		namespace: svc.cfg.DefaultNamespace,
+		account:   &gen.DyAccount{Id: "u1"},
+		deviceID:  "d2",
+	}
+	svc.connections[connectionKey{namespace: svc.cfg.DefaultNamespace, accountID: "u1", deviceID: "d1"}] = &wsConnection{
+		namespace: svc.cfg.DefaultNamespace,
+		account:   &gen.DyAccount{Id: "u1"},
+		deviceID:  "d1",
+	}
+	svc.connections[connectionKey{namespace: svc.cfg.DefaultNamespace, accountID: "u2", deviceID: "d3"}] = &wsConnection{
+		namespace: svc.cfg.DefaultNamespace,
+		account:   &gen.DyAccount{Id: "u2"},
+		deviceID:  "d3",
+	}
+
+	server := NewGRPCService(svc)
+	resp, err := server.GetUsersConnectedWebsocketDeviceIds(context.Background(), &gen.DyGetUsersConnectedWebsocketDeviceIdsRequest{
+		UserIds: []string{" u1 ", "u2", "u3", "u1", ""},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	devices := resp.GetDevices()
+	if len(devices) != 3 {
+		t.Fatalf("expected an entry per requested account, got %#v", devices)
+	}
+	if !reflect.DeepEqual(devices["u1"].GetDeviceIds(), []string{"d1", "d2"}) {
+		t.Fatalf("expected u1 devices [d1 d2], got %#v", devices["u1"].GetDeviceIds())
+	}
+	if !reflect.DeepEqual(devices["u2"].GetDeviceIds(), []string{"d3"}) {
+		t.Fatalf("expected u2 devices [d3], got %#v", devices["u2"].GetDeviceIds())
+	}
+	if entry, ok := devices["u3"]; !ok || len(entry.GetDeviceIds()) != 0 {
+		t.Fatalf("expected offline account to map to an empty list, got %#v", entry)
+	}
+
+	if _, err := server.GetUsersConnectedWebsocketDeviceIds(context.Background(), &gen.DyGetUsersConnectedWebsocketDeviceIdsRequest{}); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("expected invalid argument for empty user_ids, got %v", err)
+	}
+}
+
 func TestUniqueTrimmedStrings(t *testing.T) {
 	got := uniqueTrimmedStrings([]string{" u1 ", "", "u2", "u1", " u2 ", "u3"})
 	want := []string{"u1", "u2", "u3"}

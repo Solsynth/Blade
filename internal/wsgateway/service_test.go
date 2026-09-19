@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -54,21 +55,6 @@ func TestServiceNormalizeDeviceID_GeneratesUUIDWhenMissing(t *testing.T) {
 	got := svc.normalizeDeviceID("   ")
 	if _, err := uuid.Parse(got); err != nil {
 		t.Fatalf("expected generated UUID, got %q: %v", got, err)
-	}
-}
-
-func TestServiceNormalizeDeviceID_GeneratesUUIDWithDeviceAltSuffix(t *testing.T) {
-	svc := NewService(Config{}, nil, nil, nil, nil, nil, nil)
-
-	got := svc.normalizeDeviceID("+watch")
-	const suffix = "+watch"
-	if len(got) <= len(suffix) || got[len(got)-len(suffix):] != suffix {
-		t.Fatalf("expected generated id to keep %q suffix, got %q", suffix, got)
-	}
-
-	base := got[:len(got)-len(suffix)]
-	if _, err := uuid.Parse(base); err != nil {
-		t.Fatalf("expected uuid base in generated id %q: %v", got, err)
 	}
 }
 
@@ -357,5 +343,75 @@ func TestServiceTryAdd_APIKeyDisablesReauthAndExpiry(t *testing.T) {
 	entry.metaMu.RUnlock()
 	if !gotExpiry.IsZero() {
 		t.Fatalf("expected api key connection expiry to be cleared, got %v", gotExpiry)
+	}
+}
+
+// stubPresenceStore implements PresenceStore plus the optional account→device
+// index so the service's presence path can be exercised without Redis.
+type stubPresenceStore struct {
+	accountDevices map[string][]string
+}
+
+func (s *stubPresenceStore) Register(context.Context, string, string, string, string) error {
+	return nil
+}
+func (s *stubPresenceStore) Refresh(context.Context, string, string, string, string) error {
+	return nil
+}
+func (s *stubPresenceStore) Remove(context.Context, string, string, string, string) error {
+	return nil
+}
+
+func (s *stubPresenceStore) AccountConnected(context.Context, string, string) (bool, error) {
+	return false, nil
+}
+
+func (s *stubPresenceStore) DeviceConnected(context.Context, string, string) (bool, error) {
+	return false, nil
+}
+
+func (s *stubPresenceStore) DevicesConnected(context.Context, string, []string) (map[string]bool, error) {
+	return map[string]bool{}, nil
+}
+
+func (s *stubPresenceStore) AccountDeviceIDs(_ context.Context, _, accountID string) ([]string, error) {
+	return s.accountDevices[accountID], nil
+}
+
+func (s *stubPresenceStore) AccountsDeviceIDs(_ context.Context, _ string, accountIDs []string) (map[string][]string, error) {
+	devices := make(map[string][]string, len(accountIDs))
+	for _, accountID := range accountIDs {
+		devices[accountID] = s.accountDevices[accountID]
+	}
+	return devices, nil
+}
+
+func TestServiceConnectedDeviceIDsPrefersPresenceStore(t *testing.T) {
+	svc := NewService(Config{}, nil, nil, nil, nil, nil, nil)
+	svc.SetPresence(&stubPresenceStore{accountDevices: map[string][]string{
+		"remote-acc": {"remote-device"},
+	}})
+	svc.connections[connectionKey{namespace: svc.cfg.DefaultNamespace, accountID: "remote-acc", deviceID: "local-device"}] = &wsConnection{
+		namespace: svc.cfg.DefaultNamespace,
+		account:   &gen.DyAccount{Id: "remote-acc"},
+		deviceID:  "local-device",
+	}
+
+	if got := svc.GetUserConnectedDeviceIDs("", "remote-acc"); !reflect.DeepEqual(got, []string{"remote-device"}) {
+		t.Fatalf("expected devices from the presence store, got %#v", got)
+	}
+
+	devices := svc.GetUsersConnectedDeviceIDs("", []string{"remote-acc", "offline-acc"})
+	if !reflect.DeepEqual(devices["remote-acc"], []string{"remote-device"}) {
+		t.Fatalf("expected devices from the presence store, got %#v", devices["remote-acc"])
+	}
+	if entry, ok := devices["offline-acc"]; !ok || len(entry) != 0 {
+		t.Fatalf("expected an empty entry for the offline account, got %#v", entry)
+	}
+
+	// Without a presence store the replica-local connections answer instead.
+	svc.SetPresence(nil)
+	if got := svc.GetUserConnectedDeviceIDs("", "remote-acc"); !reflect.DeepEqual(got, []string{"local-device"}) {
+		t.Fatalf("expected local fallback devices, got %#v", got)
 	}
 }
