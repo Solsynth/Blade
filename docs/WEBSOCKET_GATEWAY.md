@@ -78,6 +78,7 @@ The key structure changed to include namespace:
 {prefix}:ns:{namespace}:account:{accountID}
 {prefix}:ns:{namespace}:device:{deviceID}
 {prefix}:ns:{namespace}:accounts
+{prefix}:ns:{namespace}:account-devices:{accountID}   # per-account live device index (member = device id, score = lease expiry)
 ```
 
 **Migration note**: Existing presence data in Redis will not be visible after upgrade. Connections will re-register under the new keys naturally as clients reconnect. No manual migration is needed.
@@ -104,6 +105,8 @@ svc.GetAllConnectedUserIDs(namespace) []string
 svc.GetAllConnectedDeviceIDs(namespace) []string
 svc.GetDevicesByAccount(namespace, accountID) []string
 svc.GetAccountsByDevice(namespace, deviceID) []string
+svc.GetUserConnectedDeviceIDs(namespace, accountID) []string   // cross-replica account→device query
+svc.GetUsersConnectedDeviceIDs(namespace, accountIDs) map[string][]string
 
 // Push (namespace-scoped)
 svc.SendPacketToAccount(namespace, accountID, packet)
