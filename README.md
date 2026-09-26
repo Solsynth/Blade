@@ -135,7 +135,9 @@ with an `http` endpoint for Blade's health probes
 
 `GET /relays` returns `503` when `discovery.enabled` is false. The registry
 service name is configurable with `discovery.relayServiceName` and must match
-`discovery.service` in the relay config.
+`discovery.service` in the relay config. See
+[RELAY_DEPLOYMENT.md](docs/RELAY_DEPLOYMENT.md) for the node's deployment,
+configuration reference, and operations.
 
 ### Special Routes Configuration
 
