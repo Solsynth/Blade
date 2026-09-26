@@ -12,6 +12,8 @@ prefix = "blade:discovery"
 leaseSeconds = 30
 leaderLeaseSeconds = 15
 registrationToken = ""
+# Registry service name under which L4 relays register; served at GET /relays.
+relayServiceName = "relay"
 
 [nats]
 url = "nats://nats:RE0zx7Qtady3Akyrn6eZXF@localhost:57132"

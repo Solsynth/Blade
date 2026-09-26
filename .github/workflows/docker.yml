@@ -8,7 +8,6 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ vars.PACKAGE_OWNER }}/blade
 
 jobs:
   build:
@@ -16,6 +15,14 @@ jobs:
     permissions:
       contents: read
       packages: write
+
+    strategy:
+      matrix:
+        include:
+          - image: blade
+            dockerfile: Dockerfile
+          - image: blade-relay
+            dockerfile: Dockerfile.relay
 
     steps:
       - name: Checkout repository
@@ -35,7 +42,8 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
+          file: ${{ matrix.dockerfile }}
           push: ${{ github.event_name != 'pull_request' }}
           tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.REGISTRY }}/${{ vars.PACKAGE_OWNER }}/${{ matrix.image }}:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ vars.PACKAGE_OWNER }}/${{ matrix.image }}:latest

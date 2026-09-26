@@ -75,6 +75,7 @@ func main() {
 	}
 
 	var registry *discovery.Registry
+	var relayCatalog *discovery.Catalog
 	var capabilityAggregator *capabilities.Aggregator
 	if cfg.Discovery.Enabled {
 		if redisClient == nil {
@@ -84,6 +85,7 @@ func main() {
 			logging.Log.Fatal().Msg("Service discovery requires discovery.registrationToken")
 		}
 		registry = discovery.NewRegistry(redisClient, cfg.Discovery.Prefix, time.Duration(cfg.Discovery.LeaseSeconds)*time.Second)
+		relayCatalog = discovery.NewCatalog(registry, cfg.Discovery.RelayServiceName)
 		capabilityAggregator = capabilities.NewWithTLSConfig(registry, cfg.GRPC.ClientTLSSkipVerify, cfg.Endpoints.CoreServiceNames...)
 		logging.Log.Info().Str("prefix", cfg.Discovery.Prefix).Msg("Enabled Redis-backed service discovery")
 	}
@@ -302,6 +304,20 @@ func main() {
 			return
 		}
 		c.JSON(http.StatusOK, capabilityAggregator.Document())
+	})
+
+	r.GET("/relays", func(c *gin.Context) {
+		if relayCatalog == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "service discovery is disabled"})
+			return
+		}
+		relays, err := relayCatalog.List(c.Request.Context())
+		if err != nil {
+			logging.Log.Warn().Err(err).Msg("Failed to list relays")
+			c.JSON(http.StatusBadGateway, gin.H{"error": "unable to list relays"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"relays": relays})
 	})
 
 	r.GET("/health", func(c *gin.Context) {

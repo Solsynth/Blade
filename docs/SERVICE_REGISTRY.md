@@ -36,6 +36,25 @@ When an `http` or `grpc` map entry is present, it overrides the corresponding
 legacy `http_endpoint` or `grpc_endpoint` field. Legacy fields remain accepted
 for existing clients.
 
+## Relay catalog
+
+L4 relay nodes (`cmd/relay`) register themselves like any other service, with
+two endpoints: `tcp` = the `host:port` clients dial, and `http` = the relay's
+own status listener, which Blade probes through the same
+`<http_endpoint>/health` cycle. They also publish `region` in `metadata` and
+use `weight` for client-side selection.
+
+Blade exposes those instances at `GET /relays`, built from the registry service
+named by `discovery.relayServiceName` (default `relay`):
+
+```json
+{"relays":[{"id":"jp-01","endpoint":"relay-jp.solian.app","port":443,"region":"jp","weight":1,"healthy":true}]}
+```
+
+`endpoint` is the host only; clients append `port`. Instances without a
+parsable `tcp` endpoint are skipped. The endpoint returns `503` when discovery
+is disabled.
+
 ## Health checks and readiness
 
 One Redis-elected Blade replica probes each registered HTTP endpoint at

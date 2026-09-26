@@ -141,6 +141,13 @@ func renewLoop(ctx context.Context, client gen.DyServiceDiscoveryServiceClient, 
 Use TLS credentials rather than `insecure.NewCredentials()` outside trusted
 local networks.
 
+`internal/relay/registration.go` (used by `cmd/relay`) is an in-repo
+implementation of this lifecycle: bounded retries with 5s-to-30s backoff on
+`Register`, renewal at one-third of the granted lease, and best-effort
+`Deregister` on shutdown. The relay publishes `tcp` (the address clients dial)
+in addition to `http`, and Blade exposes those instances at `GET /relays`; see
+[SERVICE_REGISTRY.md](SERVICE_REGISTRY.md).
+
 ## Resolving another service
 
 `Resolve` is read-only and does not require the registration secret. Ask for

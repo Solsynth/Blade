@@ -47,6 +47,7 @@ type DiscoveryConfig struct {
 	LeaseSeconds       int    `mapstructure:"leaseSeconds"`
 	LeaderLeaseSeconds int    `mapstructure:"leaderLeaseSeconds"`
 	RegistrationToken  string `mapstructure:"registrationToken"`
+	RelayServiceName   string `mapstructure:"relayServiceName"`
 }
 
 type NatsConfig struct {
@@ -125,6 +126,7 @@ func Load(configPath string) (*Config, error) {
 	viper.SetDefault("discovery.leaseSeconds", 30)
 	viper.SetDefault("discovery.leaderLeaseSeconds", 15)
 	viper.SetDefault("discovery.registrationToken", "")
+	viper.SetDefault("discovery.relayServiceName", "relay")
 
 	viper.SetDefault("websocket.enabled", true)
 	viper.SetDefault("websocket.path", "/ws")

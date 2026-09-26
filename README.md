@@ -10,6 +10,7 @@ Because Solar Network is built by pure Go at the v2, and migrated to .NET at v3,
 - **Reverse Proxy Routing** - Routes requests to backend microservices
 - **Health Monitoring** - Background health checks every 10 seconds
 - **Service Discovery** - Redis-backed leased instance registry over gRPC
+- **L4 Relays** - Optional TCP relay nodes (`cmd/relay`) that route by TLS SNI without terminating TLS
 - **Readiness Gating** - Returns 503 if core services are unhealthy
 - **CORS Support** - Allows all origins with custom headers
 - **Special Routes** - Fully configurable route system via `routes`
@@ -55,6 +56,7 @@ prefix = "blade:discovery"
 leaseSeconds = 30
 leaderLeaseSeconds = 15
 registrationToken = "replace-with-a-service-secret"
+relayServiceName = "relay"
 
 [server]
 port = "6000"
@@ -95,8 +97,10 @@ Legacy key `maintaince` is also supported for backward compatibility.
 | Variable         | Description           | Default               |
 | ---------------- | --------------------- | --------------------- |
 | `CONFIG_PATH`    | Path to config file   | `configs/config.toml` |
+| `RELAY_CONFIG_PATH` | Path to relay config file | `configs/relay.toml` |
 | `GIN_MODE`       | `debug` or `release`  | `debug`               |
 | `ZEROLOG_PRETTY` | Enable pretty logging | `false`               |
+| `LOG_LEVEL`      | Log level (`debug`, `info`, `warn`, `error`) | `info` (`debug` when pretty) |
 
 ### Service Discovery
 
@@ -110,6 +114,28 @@ and deregistration calls.
 
 Configured `[services]` targets remain a fallback until that service has a
 registered instance, allowing incremental migration.
+
+### L4 Relay Nodes
+
+`cmd/relay` is a separate binary (image `blade-relay`, config
+`configs/relay.toml`, path overridable with `RELAY_CONFIG_PATH`) that accepts
+TCP connections, peeks the cleartext TLS ClientHello for the SNI, and copies
+bytes to an upstream chosen from a static allowlist. TLS is never terminated:
+certificates, client certificates, and ECH-less SNI routing all stay
+end-to-end. Unlisted SNI is rejected unless `relay.defaultUpstream` is set.
+
+The relay registers itself like any other service (`discovery.service`,
+default `relay`) on its `tcp` endpoint (`relay.publicHost:relay.publicPort`)
+with an `http` endpoint for Blade's health probes
+(`health.advertise`). Blade serves the resulting list at `GET /relays`:
+
+```json
+{"relays":[{"id":"jp-01","endpoint":"relay-jp.solian.app","port":443,"region":"jp","weight":1,"healthy":true}]}
+```
+
+`GET /relays` returns `503` when `discovery.enabled` is false. The registry
+service name is configurable with `discovery.relayServiceName` and must match
+`discovery.service` in the relay config.
 
 ### Special Routes Configuration
 
@@ -151,17 +177,30 @@ go build -o gateway ./cmd/main.go
 CONFIG_PATH=./configs/config.toml ./gateway
 ```
 
+### Relay Node
+
+```bash
+# Build
+go build -o relay ./cmd/relay
+
+# Run (needs relay.listen; :443 requires privileges)
+RELAY_CONFIG_PATH=./configs/relay.toml ./relay
+```
+
 ### Docker
 
 ```bash
 # Build
 docker build -t dyson-gateway .
+docker build -f Dockerfile.relay -t blade-relay .
 
 # Run
 docker run -p 6000:6000 dyson-gateway
+docker run -p 443:443 -p 8081:8081 blade-relay
 
 # Run with custom config
 docker run -p 6000:6000 -v ./config.toml:/app/configs/config.toml dyson-gateway
+docker run -p 443:443 -p 8081:8081 -v ./relay.toml:/app/configs/relay.toml blade-relay
 ```
 
 ## Endpoints
@@ -169,6 +208,7 @@ docker run -p 6000:6000 -v ./config.toml:/app/configs/config.toml dyson-gateway
 | Endpoint                | Description                                                        |
 | ----------------------- | ------------------------------------------------------------------ |
 | `GET /health`           | Gateway health status                                              |
+| `GET /relays`           | Catalog of registered L4 relay nodes (`503` when discovery is off)  |
 | `/<service>/**`         | Proxied to backend service (e.g., `/ring/**` → `ring:5000/api/**`) |
 | `/ws`                   | Native WebSocket gateway (configurable via `websocket.path`)       |
 | `/.well-known/*`        | .well-known endpoints (configurable via `routes`)                  |

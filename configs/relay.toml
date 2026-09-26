@@ -1,0 +1,64 @@
+# Blade L4 relay node.
+#
+# The relay never terminates TLS. It reads the cleartext ClientHello, matches
+# the SNI against the allowlist below, and copies bytes verbatim to the origin,
+# so the certificate chain and any client certificates stay end-to-end between
+# the client and the origin service.
+#
+# Routing inputs are exactly this file's upstream rules plus an optional
+# default: an SNI that matches no rule and no default is rejected.
+# There is no wildcard matching; keys are compared case-insensitively with
+# trailing dots ignored.
+
+[relay]
+listen = ":443"
+id = "jp-01"
+publicHost = "relay-jp.solian.app"
+publicPort = 443
+region = "jp"
+weight = 1
+
+# 0 means unlimited. In-flight connections are capped before any bytes are read.
+maxConnections = 0
+
+# Bounds: how long to wait for the client hello, how long to wait for the
+# origin, and how long an idle connection may stay silent (0 disables the idle
+# deadline). No bandwidth pacing is applied to relayed bytes.
+sniTimeout = "5s"
+dialTimeout = "5s"
+idleTimeout = "0s"
+maxClientHelloBytes = 8192
+
+# Optional catch-all. Leave empty to reject every SNI that is not listed.
+# defaultUpstream = "api.solian.app:443"
+
+# The target must NOT resolve back to this relay's own public address
+# (that would route the connection into itself).
+[[relay.upstreams]]
+sni = "api.solian.app"
+target = "api.solian.app:443"
+
+[[relay.upstreams]]
+sni = "relay-jp.solian.app"
+target = "api.solian.app:443"
+
+[health]
+listen = ":8081"
+# Blade probes this endpoint for liveness; it must be reachable from Blade.
+# An internal address is preferable to the public hostname.
+advertise = "http://relay-jp.solian.app:8081"
+
+[discovery]
+# Register this relay with Blade's Redis-backed service registry so clients can
+# discover it through GET /relays.
+enabled = true
+target = "blade:7001"
+useTLS = false
+tlsSkipVerify = false
+tlsServerName = ""
+registrationToken = "replace-with-a-service-secret"
+service = "relay"
+leaseSeconds = 30
+
+[log]
+pretty = true
