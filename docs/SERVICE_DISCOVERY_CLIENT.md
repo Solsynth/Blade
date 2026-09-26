@@ -141,12 +141,13 @@ func renewLoop(ctx context.Context, client gen.DyServiceDiscoveryServiceClient, 
 Use TLS credentials rather than `insecure.NewCredentials()` outside trusted
 local networks.
 
-`internal/relay/registration.go` (used by `cmd/relay`) is an in-repo
-implementation of this lifecycle: bounded retries with 5s-to-30s backoff on
-`Register`, renewal at one-third of the granted lease, and best-effort
-`Deregister` on shutdown. The relay publishes `tcp` (the address clients dial)
-in addition to `http`, and Blade exposes those instances at `GET /relays`; see
-[SERVICE_REGISTRY.md](SERVICE_REGISTRY.md).
+`internal/relay/registration.go` (used by `cmd/relay`) is the one client that
+does *not* use this gRPC contract: relays are deployed outside the cluster
+network, so they register, renew, and report their own health over the
+gateway's public HTTPS entry instead. The cadence is the same — bounded retries
+with 5s-to-30s backoff, renewal at one-third of the granted lease, and a
+best-effort withdrawal on shutdown — and Blade exposes those instances at
+`GET /relays`; see [SERVICE_REGISTRY.md](SERVICE_REGISTRY.md).
 
 ## Resolving another service
 

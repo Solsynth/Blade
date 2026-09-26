@@ -1,39 +1,27 @@
 # Blade L4 relay node.
 #
-# The relay never terminates TLS. It reads the cleartext ClientHello, matches
-# the SNI against the allowlist below, and copies bytes verbatim to the origin,
-# so the certificate chain and any client certificates stay end-to-end between
-# the client and the origin service.
-#
-# Routing inputs are exactly this file's upstream rules plus an optional
-# default: an SNI that matches no rule and no default is rejected.
-# There is no wildcard matching; keys are compared case-insensitively with
-# trailing dots ignored.
+# TLS is never terminated here: the relay peeks the cleartext TLS ClientHello,
+# matches the SNI against the allowlist below, and copies bytes to the origin,
+# so certificates and end-to-end encryption stay between client and origin.
 
 [relay]
 listen = ":443"
+# Instance id in the catalog; must be unique per relay service.
 id = "jp-01"
+# Address clients dial and the catalog publishes.
 publicHost = "relay-jp.solian.app"
 publicPort = 443
 region = "jp"
-weight = 1
+# weight = 1               # client-side preference among relays
+# maxConnections = 0       # 0 is unlimited
+# dialTimeout = "5s"       # budget for reaching an origin
+# idleTimeout = "0s"       # 0 disables; otherwise drop silent connections
+# sniTimeout = "5s"        # budget for reading the ClientHello
+# maxClientHelloBytes = 8192
+# defaultUpstream = ""     # empty means: reject every SNI not listed below
 
-# 0 means unlimited. In-flight connections are capped before any bytes are read.
-maxConnections = 0
-
-# Bounds: how long to wait for the client hello, how long to wait for the
-# origin, and how long an idle connection may stay silent (0 disables the idle
-# deadline). No bandwidth pacing is applied to relayed bytes.
-sniTimeout = "5s"
-dialTimeout = "5s"
-idleTimeout = "0s"
-maxClientHelloBytes = 8192
-
-# Optional catch-all. Leave empty to reject every SNI that is not listed.
-# defaultUpstream = "api.solian.app:443"
-
-# The target must NOT resolve back to this relay's own public address
-# (that would route the connection into itself).
+# The allowlist is the only routing input. Targets need an explicit port, and
+# must not point back at this relay's own public address (that would loop).
 [[relay.upstreams]]
 sni = "api.solian.app"
 target = "api.solian.app:443"
@@ -42,23 +30,16 @@ target = "api.solian.app:443"
 sni = "relay-jp.solian.app"
 target = "api.solian.app:443"
 
+# Operator surface only: GET /health dials the upstreams, GET /status reports
+# counters. Blade does not probe it — relays live outside the cluster network
+# and report their own health over the public entry instead.
 [health]
 listen = ":8081"
-# Blade probes this endpoint for liveness; it must be reachable from Blade.
-# An internal address is preferable to the public hostname.
-advertise = "http://relay-jp.solian.app:8081"
 
+# Registration runs over the gateway's public HTTPS entry, so this node needs
+# no cluster-network access and no inbound port beyond relay.listen. The
+# gateway owns the service name, lease, and instance path.
 [discovery]
-# Register this relay with Blade's Redis-backed service registry so clients can
-# discover it through GET /relays.
 enabled = true
-target = "blade:7001"
-useTLS = false
-tlsSkipVerify = false
-tlsServerName = ""
+url = "https://api.solian.app"
 registrationToken = "replace-with-a-service-secret"
-service = "relay"
-leaseSeconds = 30
-
-[log]
-pretty = true

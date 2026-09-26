@@ -5,20 +5,14 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 	"time"
 
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/credentials/insecure"
-	gen "src.solsynth.dev/sosys/go/proto"
 	"srv.solsynth.dev/sosys/blade/internal/logging"
 	"srv.solsynth.dev/sosys/blade/internal/relay"
 )
@@ -47,7 +41,7 @@ func main() {
 		Str("configPath", configPath).
 		Str("id", cfg.Relay.ID).
 		Str("listen", cfg.Relay.Listen).
-		Str("publicAddress", net.JoinHostPort(cfg.Relay.PublicHost, strconv.Itoa(cfg.Relay.PublicPort))).
+		Str("publicAddress", cfg.Relay.PublicAddress()).
 		Interface("upstreams", upstreams).
 		Str("defaultUpstream", cfg.Relay.DefaultUpstream).
 		Msg("Starting Blade relay node")
@@ -86,19 +80,17 @@ func main() {
 
 	var registration *relay.Registration
 	if cfg.Discovery.Enabled {
-		conn, err := grpc.NewClient(cfg.Discovery.Target, grpc.WithTransportCredentials(discoveryCredentials(*cfg)))
+		registration, err = relay.NewRegistration(*cfg, func(ctx context.Context) bool {
+			return len(relay.UpstreamFailures(*cfg, cfg.Relay.DialTimeout)) == 0
+		})
 		if err != nil {
-			logging.Log.Fatal().Err(err).Str("target", cfg.Discovery.Target).Msg("Failed to create the discovery client")
+			logging.Log.Fatal().Err(err).Str("url", cfg.Discovery.URL).Msg("Failed to build the discovery client")
 		}
-		defer func() { _ = conn.Close() }()
-
-		registration = relay.NewRegistration(gen.NewDyServiceDiscoveryServiceClient(conn), *cfg)
 		go registration.Run(ctx)
 		logging.Log.Info().
-			Str("target", cfg.Discovery.Target).
-			Str("service", cfg.Discovery.Service).
-			Dur("lease", time.Duration(cfg.Discovery.LeaseSeconds)*time.Second).
-			Msg("Announcing this relay to Blade service discovery")
+			Str("url", cfg.Discovery.URL).
+			Str("instance", cfg.Relay.ID).
+			Msg("Announcing this relay to the Blade catalog over the public entry")
 	} else {
 		logging.Log.Warn().Msg("Relay discovery is disabled; this relay will not be listed by Blade")
 	}
@@ -126,14 +118,4 @@ func main() {
 	}
 
 	logging.Log.Info().Msg("Relay exited")
-}
-
-func discoveryCredentials(cfg relay.Config) credentials.TransportCredentials {
-	if !cfg.Discovery.UseTLS {
-		return insecure.NewCredentials()
-	}
-	return credentials.NewTLS(&tls.Config{
-		InsecureSkipVerify: cfg.Discovery.TLSSkipVerify,
-		ServerName:         cfg.Discovery.TLSServerName,
-	})
 }

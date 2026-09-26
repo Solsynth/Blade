@@ -22,10 +22,8 @@ func validConfig() *Config {
 		},
 		Health: HealthConfig{Listen: ":7481"},
 		Discovery: DiscoveryConfig{
-			Target:            "blade:7001",
+			URL:               "https://api.solian.app",
 			RegistrationToken: "secret",
-			Service:           "relay",
-			LeaseSeconds:      30,
 		},
 	}
 	cfg.Normalize()
@@ -53,9 +51,13 @@ func TestValidateRelayConfig(t *testing.T) {
 		"upstream without port": func(c *Config) { c.Relay.Upstreams[0].Target = "api.solian.app" },
 		"upstream empty target": func(c *Config) { c.Relay.Upstreams[0].Target = "" },
 		"bad default upstream":  func(c *Config) { c.Relay.DefaultUpstream = "api.solian.app" },
-		"discovery without target": func(c *Config) {
+		"discovery without url": func(c *Config) {
 			c.Discovery.Enabled = true
-			c.Discovery.Target = ""
+			c.Discovery.URL = ""
+		},
+		"discovery with relative url": func(c *Config) {
+			c.Discovery.Enabled = true
+			c.Discovery.URL = "api.solian.app"
 		},
 		"discovery without token": func(c *Config) {
 			c.Discovery.Enabled = true
@@ -64,14 +66,6 @@ func TestValidateRelayConfig(t *testing.T) {
 		"discovery without public host": func(c *Config) {
 			c.Discovery.Enabled = true
 			c.Relay.PublicHost = ""
-		},
-		"discovery without service": func(c *Config) {
-			c.Discovery.Enabled = true
-			c.Discovery.Service = ""
-		},
-		"discovery with short lease": func(c *Config) {
-			c.Discovery.Enabled = true
-			c.Discovery.LeaseSeconds = 2
 		},
 	}
 
@@ -132,20 +126,10 @@ func TestNormalizeFillsIdentityAndCanonicalizesSNI(t *testing.T) {
 	}
 }
 
-func TestHealthAdvertise(t *testing.T) {
+func TestPublicAddress(t *testing.T) {
 	cfg := validConfig()
-	if got := healthAdvertise(*cfg); got != "http://relay-jp.solian.app:7481" {
-		t.Fatalf("healthAdvertise() = %q, want the derived public address", got)
-	}
-	cfg.Health.Advertise = "http://10.0.0.5:8081"
-	if got := healthAdvertise(*cfg); got != "http://10.0.0.5:8081" {
-		t.Fatalf("healthAdvertise() = %q, want the configured advertise address", got)
-	}
-
-	cfg.Health.Listen = "malformed"
-	cfg.Health.Advertise = ""
-	if got := healthAdvertise(*cfg); got != "http://relay-jp.solian.app:8081" {
-		t.Fatalf("healthAdvertise() = %q, want the 8081 fallback", got)
+	if got := cfg.Relay.PublicAddress(); got != "relay-jp.solian.app:443" {
+		t.Fatalf("PublicAddress() = %q, want the dialed public address", got)
 	}
 }
 
@@ -163,7 +147,7 @@ func TestLoadSampleConfig(t *testing.T) {
 	if len(cfg.Relay.Upstreams) != 2 || cfg.Relay.Upstreams[0].SNI != "api.solian.app" {
 		t.Fatalf("upstreams = %+v", cfg.Relay.Upstreams)
 	}
-	if !cfg.Discovery.Enabled || cfg.Discovery.Service != "relay" || cfg.Discovery.LeaseSeconds != 30 {
+	if !cfg.Discovery.Enabled || cfg.Discovery.URL != "https://api.solian.app" {
 		t.Fatalf("discovery = %+v", cfg.Discovery)
 	}
 }

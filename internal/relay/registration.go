@@ -1,15 +1,18 @@
 package relay
 
 import (
+	"bytes"
 	"context"
-	"net"
-	"strconv"
+	"crypto/tls"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
 
-	"google.golang.org/grpc/metadata"
-	gen "src.solsynth.dev/sosys/go/proto"
 	"srv.solsynth.dev/sosys/blade/internal/logging"
 )
 
@@ -18,88 +21,99 @@ const (
 	registrationRetryDelay  = 5 * time.Second
 	registrationRetryMax    = 30 * time.Second
 	deregisterTimeout       = 5 * time.Second
-	defaultHealthPort       = 8081
+	defaultRenewalInterval  = 10 * time.Second
+	maxRegistrationBody     = 4 << 10
 )
 
-// Registration publishes this relay into Blade's service registry and keeps
-// its lease renewed, mirroring the register -> renew -> deregister lifecycle
-// the rest of the fleet uses.
+// HealthFunc reports whether this relay's upstreams are reachable right now.
+type HealthFunc func(ctx context.Context) bool
+
+// Registration publishes this relay into the gateway's relay catalog and keeps
+// its lease renewed.
+//
+// Relays are deployed outside the cluster network: they cannot reach the
+// internal gRPC discovery service and the gateway cannot dial them, so the
+// control plane runs over the public HTTPS entry and health is reported here
+// instead of being probed. A relay that stops reporting simply expires.
 type Registration struct {
-	client   gen.DyServiceDiscoveryServiceClient
 	cfg      Config
-	instance *gen.DyServiceInstance
+	client   *http.Client
+	endpoint string
+	health   HealthFunc
 
 	mu         sync.Mutex
 	registered bool
 }
 
-// NewRegistration builds the instance record that is published on every
-// (re-)registration. cfg supplies the public address, region, weight, and the
-// health endpoint Blade probes.
-func NewRegistration(client gen.DyServiceDiscoveryServiceClient, cfg Config) *Registration {
-	instanceMetadata := make(map[string]string, 1)
-	if cfg.Relay.Region != "" {
-		instanceMetadata["region"] = cfg.Relay.Region
+// NewRegistration prepares the control client. health supplies the state sent
+// on every heartbeat; pass nil to report healthy unconditionally.
+func NewRegistration(cfg Config, health HealthFunc) (*Registration, error) {
+	base, err := url.Parse(strings.TrimSpace(cfg.Discovery.URL))
+	if err != nil {
+		return nil, fmt.Errorf("discovery.url: %w", err)
 	}
+	if base.Host == "" || (base.Scheme != "http" && base.Scheme != "https") {
+		return nil, fmt.Errorf("discovery.url must be an absolute http(s) URL, got %q", cfg.Discovery.URL)
+	}
+
+	client := &http.Client{Timeout: registrationCallTimeout}
+	if cfg.Discovery.TLSSkipVerify {
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+		client.Transport = transport
+	}
+
+	control := *base
+	control.Path = strings.TrimRight(base.Path, "/") + "/relays/" + url.PathEscape(cfg.Relay.ID)
+
 	return &Registration{
-		client: client,
-		cfg:    cfg,
-		instance: &gen.DyServiceInstance{
-			Service:    cfg.Discovery.Service,
-			InstanceId: cfg.Relay.ID,
-			Weight:     cfg.Relay.Weight,
-			Endpoints: map[string]string{
-				"tcp":  net.JoinHostPort(cfg.Relay.PublicHost, strconv.Itoa(cfg.Relay.PublicPort)),
-				"http": healthAdvertise(cfg),
-			},
-			Metadata: instanceMetadata,
-		},
-	}
+		cfg:      cfg,
+		client:   client,
+		endpoint: control.String(),
+		health:   health,
+	}, nil
 }
 
-// healthAdvertise is the endpoint Blade probes. Operators should point it at an
-// address reachable from Blade; otherwise it falls back to the public host and
-// the health listener's port.
-func healthAdvertise(cfg Config) string {
-	if cfg.Health.Advertise != "" {
-		return cfg.Health.Advertise
-	}
-	port := defaultHealthPort
-	if _, parsed, err := net.SplitHostPort(cfg.Health.Listen); err == nil {
-		if number, convErr := strconv.Atoi(parsed); convErr == nil {
-			port = number
-		}
-	}
-	return "http://" + net.JoinHostPort(cfg.Relay.PublicHost, strconv.Itoa(port))
+// relayRegistration is the payload the gateway stores for this relay.
+type relayRegistration struct {
+	Endpoint string `json:"endpoint"`
+	Port     int    `json:"port"`
+	Region   string `json:"region"`
+	Weight   int32  `json:"weight"`
+	Healthy  bool   `json:"healthy"`
 }
 
-// Run registers and renews until ctx is cancelled. Registration failures retry
-// with exponential backoff (5s doubling to a 30s cap); a failed renewal falls
-// back to a fresh registration slot.
+type relayRegistrationResponse struct {
+	ID                   string `json:"id"`
+	LeaseExpiresAtUnixMs int64  `json:"lease_expires_at_unix_ms"`
+}
+
+// Run publishes and renews until ctx is cancelled. Failures retry with
+// exponential backoff (5s doubling to a 30s cap); a failed renewal falls back
+// to a fresh registration slot.
 func (r *Registration) Run(ctx context.Context) {
 	retryDelay := registrationRetryDelay
 	for {
-		interval, err := r.register(ctx)
+		interval, err := r.publish(ctx)
 		if err == nil {
 			r.setRegistered(true)
 			retryDelay = registrationRetryDelay
-			r.renewLoop(ctx, interval)
+			interval = r.renewLoop(ctx, interval)
 			if ctx.Err() != nil {
 				return
 			}
-			// The lease was lost: fall through and register again.
+			err = fmt.Errorf("lease renewal failed after %s", interval)
 		} else if ctx.Err() != nil {
 			return
-		} else {
-			r.setRegistered(false)
-			logging.Log.Warn().
-				Err(err).
-				Str("service", r.cfg.Discovery.Service).
-				Str("instance", r.instance.GetInstanceId()).
-				Str("target", r.cfg.Discovery.Target).
-				Dur("retryIn", retryDelay).
-				Msg("Relay service discovery registration failed")
 		}
+
+		r.setRegistered(false)
+		logging.Log.Warn().
+			Err(err).
+			Str("instance", r.cfg.Relay.ID).
+			Str("endpoint", r.endpoint).
+			Dur("retryIn", retryDelay).
+			Msg("Relay registration failed")
 
 		select {
 		case <-ctx.Done():
@@ -112,88 +126,140 @@ func (r *Registration) Run(ctx context.Context) {
 	}
 }
 
-func (r *Registration) register(ctx context.Context) (time.Duration, error) {
-	callCtx, cancel := context.WithTimeout(ctx, registrationCallTimeout)
-	defer cancel()
-
-	response, err := r.client.Register(r.authorized(callCtx), &gen.DyRegisterServiceInstanceRequest{
-		Instance:     r.instance,
-		LeaseSeconds: int32(r.cfg.Discovery.LeaseSeconds),
-	})
+// publish sends the current health report and renews the lease in one call: the
+// control endpoint is an idempotent upsert, so a refreshed endpoint, region, or
+// weight travels with every heartbeat.
+func (r *Registration) publish(ctx context.Context) (time.Duration, error) {
+	report := relayRegistration{
+		Endpoint: r.cfg.Relay.PublicHost,
+		Port:     r.cfg.Relay.PublicPort,
+		Region:   r.cfg.Relay.Region,
+		Weight:   r.cfg.Relay.Weight,
+		Healthy:  r.reportHealth(ctx),
+	}
+	payload, err := json.Marshal(report)
 	if err != nil {
 		return 0, err
 	}
+
+	callCtx, cancel := context.WithTimeout(ctx, registrationCallTimeout)
+	defer cancel()
+
+	request, err := http.NewRequestWithContext(callCtx, http.MethodPut, r.endpoint, bytes.NewReader(payload))
+	if err != nil {
+		return 0, err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+strings.TrimSpace(r.cfg.Discovery.RegistrationToken))
+
+	response, err := r.client.Do(request)
+	if err != nil {
+		return 0, err
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		message, _ := io.ReadAll(io.LimitReader(response.Body, maxRegistrationBody))
+		return 0, fmt.Errorf("registration rejected: HTTP %d %s", response.StatusCode, strings.TrimSpace(string(message)))
+	}
+
+	var decoded relayRegistrationResponse
+	if err := json.NewDecoder(io.LimitReader(response.Body, maxRegistrationBody)).Decode(&decoded); err != nil {
+		return 0, fmt.Errorf("registration response: %w", err)
+	}
+
 	logging.Log.Info().
-		Str("service", r.cfg.Discovery.Service).
-		Str("instance", r.instance.GetInstanceId()).
-		Str("tcp", r.instance.GetEndpoints()["tcp"]).
-		Str("http", r.instance.GetEndpoints()["http"]).
-		Msg("Relay registered with Blade service discovery")
-	return RenewalInterval(response.GetLeaseExpiresAtUnixMs(), int32(r.cfg.Discovery.LeaseSeconds), time.Now()), nil
+		Str("instance", r.cfg.Relay.ID).
+		Str("tcp", r.cfg.Relay.PublicAddress()).
+		Str("region", r.cfg.Relay.Region).
+		Bool("healthy", report.Healthy).
+		Time("expiresAt", time.UnixMilli(decoded.LeaseExpiresAtUnixMs)).
+		Msg("Relay registered with the catalog")
+	return RenewalInterval(decoded.LeaseExpiresAtUnixMs, time.Now()), nil
 }
 
-func (r *Registration) renewLoop(ctx context.Context, interval time.Duration) {
+// renewLoop heartbeats until ctx ends or a renewal fails, then returns the
+// interval it was using so the caller can report it.
+func (r *Registration) renewLoop(ctx context.Context, interval time.Duration) time.Duration {
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return interval
 		case <-time.After(interval):
 		}
 
-		callCtx, cancel := context.WithTimeout(ctx, registrationCallTimeout)
-		response, err := r.client.Renew(r.authorized(callCtx), &gen.DyRenewServiceLeaseRequest{
-			Service:      r.cfg.Discovery.Service,
-			InstanceId:   r.instance.GetInstanceId(),
-			LeaseSeconds: int32(r.cfg.Discovery.LeaseSeconds),
-		})
-		cancel()
+		next, err := r.publish(ctx)
 		if err != nil {
 			if ctx.Err() != nil {
-				return
+				return interval
 			}
 			logging.Log.Warn().
 				Err(err).
-				Str("service", r.cfg.Discovery.Service).
-				Str("instance", r.instance.GetInstanceId()).
-				Msg("Relay service discovery renewal failed; re-registering")
-			return
+				Str("instance", r.cfg.Relay.ID).
+				Msg("Relay lease renewal failed; re-registering")
+			return interval
 		}
-		interval = RenewalInterval(response.GetLeaseExpiresAtUnixMs(), int32(r.cfg.Discovery.LeaseSeconds), time.Now())
+		interval = next
 	}
 }
 
-// Deregister removes this relay from the registry. It is best effort: the
-// lease expires on its own if the call does not land.
+// reportHealth runs the same upstream check the /health endpoint serves.
+func (r *Registration) reportHealth(ctx context.Context) bool {
+	if r.health == nil {
+		return true
+	}
+	callCtx, cancel := context.WithTimeout(ctx, registrationCallTimeout)
+	defer cancel()
+	return r.health(callCtx)
+}
+
+// Deregister withdraws this relay so it leaves the catalog before its lease
+// expires. It is best effort: the lease expires on its own.
 func (r *Registration) Deregister(ctx context.Context) {
 	if !r.isRegistered() {
 		return
 	}
+
 	callCtx, cancel := context.WithTimeout(ctx, deregisterTimeout)
 	defer cancel()
 
-	if _, err := r.client.Deregister(r.authorized(callCtx), &gen.DyDeregisterServiceInstanceRequest{
-		Service:    r.cfg.Discovery.Service,
-		InstanceId: r.instance.GetInstanceId(),
-	}); err != nil {
+	request, err := http.NewRequestWithContext(callCtx, http.MethodDelete, r.endpoint, nil)
+	if err != nil {
+		logging.Log.Warn().Err(err).Str("instance", r.cfg.Relay.ID).Msg("Relay deregistration failed")
+		return
+	}
+	request.Header.Set("Authorization", "Bearer "+strings.TrimSpace(r.cfg.Discovery.RegistrationToken))
+
+	response, err := r.client.Do(request)
+	if err != nil {
+		logging.Log.Warn().Err(err).Str("instance", r.cfg.Relay.ID).Msg("Relay deregistration failed")
+		return
+	}
+	defer response.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, maxRegistrationBody))
+
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		logging.Log.Warn().
-			Err(err).
-			Str("service", r.cfg.Discovery.Service).
-			Str("instance", r.instance.GetInstanceId()).
-			Msg("Relay service discovery deregistration failed")
+			Int("status", response.StatusCode).
+			Str("instance", r.cfg.Relay.ID).
+			Msg("Relay deregistration rejected")
 		return
 	}
 	r.setRegistered(false)
 }
 
 // RenewalInterval is a third of the remaining lease, never below one second.
-// It is pure so the cadence can be unit-tested.
-func RenewalInterval(leaseExpiresAtUnixMs int64, leaseSeconds int32, now time.Time) time.Duration {
-	if leaseExpiresAtUnixMs > 0 {
-		if remaining := time.UnixMilli(leaseExpiresAtUnixMs).Sub(now); remaining > 0 {
-			return clampRenewal(remaining.Seconds() / 3)
-		}
+// Without a usable expiry it falls back to a conservative cadence. Pure, so the
+// heartbeat rhythm can be unit-tested.
+func RenewalInterval(leaseExpiresAtUnixMs int64, now time.Time) time.Duration {
+	if leaseExpiresAtUnixMs <= 0 {
+		return defaultRenewalInterval
 	}
-	return clampRenewal(float64(leaseSeconds) / 3)
+	remaining := time.UnixMilli(leaseExpiresAtUnixMs).Sub(now)
+	if remaining <= 0 {
+		return time.Second
+	}
+	return clampRenewal(remaining.Seconds() / 3)
 }
 
 func clampRenewal(seconds float64) time.Duration {
@@ -201,10 +267,6 @@ func clampRenewal(seconds float64) time.Duration {
 		return time.Second
 	}
 	return time.Duration(seconds * float64(time.Second))
-}
-
-func (r *Registration) authorized(ctx context.Context) context.Context {
-	return metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+strings.TrimSpace(r.cfg.Discovery.RegistrationToken))
 }
 
 func (r *Registration) setRegistered(registered bool) {

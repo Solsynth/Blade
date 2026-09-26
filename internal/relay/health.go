@@ -17,13 +17,10 @@ import (
 // Any other path is a 404, including the /api/** paths Blade's proxy rewrite
 // produces when it proxies the "relay" service.
 func NewHealthHandler(cfg Config, stats *Stats) http.Handler {
-	targets := upstreamTargets(cfg)
-	dialTimeout := cfg.Relay.DialTimeout
-
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/health":
-			writeHealth(w, targets, dialTimeout)
+			writeHealth(w, cfg)
 		case "/status":
 			writeStatus(w, stats)
 		default:
@@ -59,11 +56,14 @@ type unhealthyReport struct {
 	Failures map[string]string `json:"failures"`
 }
 
-func writeHealth(w http.ResponseWriter, targets []string, dialTimeout time.Duration) {
+// UpstreamFailures dials every configured upstream and returns the ones that
+// refused, keyed by target. The relay's own /health and the self-reported
+// heartbeat to Blade both use it, so the two can never disagree.
+func UpstreamFailures(cfg Config, dialTimeout time.Duration) map[string]string {
 	failures := make(map[string]string)
 	var mu sync.Mutex
 	var wg sync.WaitGroup
-	for _, target := range targets {
+	for _, target := range upstreamTargets(cfg) {
 		wg.Add(1)
 		go func(target string) {
 			defer wg.Done()
@@ -79,6 +79,11 @@ func writeHealth(w http.ResponseWriter, targets []string, dialTimeout time.Durat
 		}(target)
 	}
 	wg.Wait()
+	return failures
+}
+
+func writeHealth(w http.ResponseWriter, cfg Config) {
+	failures := UpstreamFailures(cfg, cfg.Relay.DialTimeout)
 
 	if len(failures) == 0 {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")

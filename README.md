@@ -124,18 +124,22 @@ bytes to an upstream chosen from a static allowlist. TLS is never terminated:
 certificates, client certificates, and ECH-less SNI routing all stay
 end-to-end. Unlisted SNI is rejected unless `relay.defaultUpstream` is set.
 
-The relay registers itself like any other service (`discovery.service`,
-default `relay`) on its `tcp` endpoint (`relay.publicHost:relay.publicPort`)
-with an `http` endpoint for Blade's health probes
-(`health.advertise`). Blade serves the resulting list at `GET /relays`:
+Relays are deployed outside the cluster network, so they announce themselves
+over the gateway's **public HTTPS entry** — `PUT <discovery.url>/relays/{id}`
+with `discovery.registrationToken` — publishing a `tcp` endpoint
+(`relay.publicHost:relay.publicPort`), a region, and a weight. The heartbeat
+carries the relay's own health report: the elected checker never dials a relay,
+because it cannot reach one, and a relay that stops reporting expires out of
+the catalog. Blade serves the resulting list at `GET /relays`:
 
 ```json
 {"relays":[{"id":"jp-01","endpoint":"relay-jp.solian.app","port":443,"region":"jp","weight":1,"healthy":true}]}
 ```
 
-`GET /relays` returns `503` when `discovery.enabled` is false. The registry
-service name is configurable with `discovery.relayServiceName` and must match
-`discovery.service` in the relay config. See
+`GET /relays` returns `503` when `discovery.enabled` is false. The gateway owns
+the registry service name (`discovery.relayServiceName`, default `relay`).
+Those control routes are mounted ahead of the readiness gate so a relay can
+register while core services are unhealthy. See
 [RELAY_DEPLOYMENT.md](docs/RELAY_DEPLOYMENT.md) for the node's deployment,
 configuration reference, and operations.
 
@@ -198,11 +202,11 @@ docker build -f Dockerfile.relay -t blade-relay .
 
 # Run
 docker run -p 6000:6000 dyson-gateway
-docker run -p 443:443 -p 8081:8081 blade-relay
+docker run -p 443:443 -p 127.0.0.1:8081:8081 blade-relay
 
 # Run with custom config
 docker run -p 6000:6000 -v ./config.toml:/app/configs/config.toml dyson-gateway
-docker run -p 443:443 -p 8081:8081 -v ./relay.toml:/app/configs/relay.toml blade-relay
+docker run -p 443:443 -p 127.0.0.1:8081:8081 -v ./relay.toml:/app/configs/relay.toml blade-relay
 ```
 
 ## Endpoints

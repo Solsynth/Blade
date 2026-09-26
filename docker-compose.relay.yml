@@ -1,0 +1,46 @@
+# Example compose file for a Blade L4 relay node, deployed outside Blade's
+# network: it only needs egress to the gateway's public entry (discovery.url)
+# and to its upstreams.
+#
+#   docker compose -f docker-compose.relay.yml up -d
+#
+# Pair it with a relay.toml (see configs/relay-example.toml). Only
+# relay.listen is published publicly; the status listener stays on the host's
+# loopback for operators.
+name: blade-relay
+
+services:
+  relay:
+    image: blade-relay:latest
+    # Drop `build` if you deploy the image CI publishes.
+    build:
+      context: .
+      dockerfile: Dockerfile.relay
+    container_name: blade-relay-jp-01
+    restart: unless-stopped
+    environment:
+      RELAY_CONFIG_PATH: /app/configs/relay.toml
+      ZEROLOG_PRETTY: "false"
+      LOG_LEVEL: info
+    ports:
+      # relay.listen — the only port that should face the internet.
+      - "443:443"
+      # health.listen — operators only; the gateway never dials it.
+      - "127.0.0.1:8081:8081"
+    volumes:
+      # Must be readable in the container and holds the registration token.
+      - ./configs/relay.toml:/app/configs/relay.toml:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8081/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    # SIGTERM stops accepting, cuts live connections, and withdraws the
+    # registration within a 5 second budget.
+    stop_grace_period: 5s
+    # Needs CAP_NET_BIND_SERVICE only for binding :443; harmless for root.
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE

@@ -38,14 +38,33 @@ for existing clients.
 
 ## Relay catalog
 
-L4 relay nodes (`cmd/relay`) register themselves like any other service, with
-two endpoints: `tcp` = the `host:port` clients dial, and `http` = the relay's
-own status listener, which Blade probes through the same
-`<http_endpoint>/health` cycle. They also publish `region` in `metadata` and
-use `weight` for client-side selection.
+L4 relay nodes (`cmd/relay`) are deployed outside the cluster network, so they
+are the one service that does not register over the internal gRPC API. They
+reach the gateway's public HTTPS entry instead:
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `PUT` | `/relays/{id}` | Register or renew, carrying the relay's own health report |
+| `DELETE` | `/relays/{id}` | Withdraw before the lease ends |
+
+Both require `authorization: Bearer <discovery.registrationToken>`. Registering
+an instance publishes a single `tcp` endpoint — the `host:port` clients dial —
+plus `region` in `metadata`, and uses `weight` for client-side selection. The
+service name, lease, and path belong to the gateway
+(`discovery.relayServiceName`, default `relay`), so a relay cannot announce
+itself as some other service.
+
+Those control routes are mounted ahead of the readiness gate: relays must be
+able to register and renew while core services are unhealthy.
+
+Because the elected checker cannot reach an out-of-network relay, the relay's
+heartbeat *is* its health: `healthy` travels with the lease, and a relay that
+stops reporting expires out of the catalog. The checker skips
+`discovery.relayServiceName` entirely, so a probe can never overwrite a
+self-report.
 
 Blade exposes those instances at `GET /relays`, built from the registry service
-named by `discovery.relayServiceName` (default `relay`):
+named by `discovery.relayServiceName`:
 
 ```json
 {"relays":[{"id":"jp-01","endpoint":"relay-jp.solian.app","port":443,"region":"jp","weight":1,"healthy":true}]}
@@ -58,8 +77,9 @@ is disabled.
 ## Health checks and readiness
 
 One Redis-elected Blade replica probes each registered HTTP endpoint at
-`<http_endpoint>/health`. The probe result is written back to the registry;
-all Blade replicas then consume that shared health state.
+`<http_endpoint>/health`, except for services that report their own health
+(relays, see above). The probe result is written back to the registry; all
+Blade replicas then consume that shared health state.
 
 Registered-only services are health-checked even if absent from
 `endpoints.serviceNames`. A registered-only service with no current instance,

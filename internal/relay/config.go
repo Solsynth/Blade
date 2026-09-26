@@ -8,6 +8,7 @@ package relay
 import (
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -17,13 +18,11 @@ import (
 )
 
 const (
-	defaultListenAddr            = ":443"
-	defaultHealthListenAddr      = ":8081"
-	defaultSNITimeout            = 5 * time.Second
-	defaultDialTimeout           = 5 * time.Second
-	defaultMaxClientHelloBytes   = 8192
-	defaultDiscoveryService      = "relay"
-	defaultDiscoveryLeaseSeconds = 30
+	defaultListenAddr          = ":443"
+	defaultHealthListenAddr    = ":8081"
+	defaultSNITimeout          = 5 * time.Second
+	defaultDialTimeout         = 5 * time.Second
+	defaultMaxClientHelloBytes = 8192
 )
 
 // Config is the full relay configuration, loaded from a single TOML file.
@@ -59,24 +58,28 @@ type UpstreamRule struct {
 	Target string `mapstructure:"target"`
 }
 
-// HealthConfig configures the relay's own HTTP status listener, which Blade
-// probes for liveness.
-type HealthConfig struct {
-	Listen    string `mapstructure:"listen"`
-	Advertise string `mapstructure:"advertise"`
+// PublicAddress is the address clients dial and the catalog publishes.
+func (c RelayConfig) PublicAddress() string {
+	return net.JoinHostPort(c.PublicHost, strconv.Itoa(c.PublicPort))
 }
 
-// DiscoveryConfig configures the registration of this relay in Blade's
-// Redis-backed service registry.
+// HealthConfig configures the relay's own HTTP status listener. It is an
+// operator surface only: the gateway does not probe it, because relays live
+// outside the cluster network.
+type HealthConfig struct {
+	Listen string `mapstructure:"listen"`
+}
+
+// DiscoveryConfig configures how this relay announces itself to the gateway.
+//
+// The gateway is reached over its public HTTPS entry, so a relay needs no
+// cluster-network access and no inbound port beyond the one clients already
+// dial. The service name, lease, and instance path are the gateway's business.
 type DiscoveryConfig struct {
 	Enabled           bool   `mapstructure:"enabled"`
-	Target            string `mapstructure:"target"`
-	UseTLS            bool   `mapstructure:"useTLS"`
+	URL               string `mapstructure:"url"`
 	TLSSkipVerify     bool   `mapstructure:"tlsSkipVerify"`
-	TLSServerName     string `mapstructure:"tlsServerName"`
 	RegistrationToken string `mapstructure:"registrationToken"`
-	Service           string `mapstructure:"service"`
-	LeaseSeconds      int    `mapstructure:"leaseSeconds"`
 }
 
 // LogConfig selects the log output format.
@@ -105,16 +108,11 @@ func Load(path string) (*Config, error) {
 	viper.SetDefault("relay.upstreams", []UpstreamRule{})
 
 	viper.SetDefault("health.listen", defaultHealthListenAddr)
-	viper.SetDefault("health.advertise", "")
 
 	viper.SetDefault("discovery.enabled", false)
-	viper.SetDefault("discovery.target", "")
-	viper.SetDefault("discovery.useTLS", false)
+	viper.SetDefault("discovery.url", "")
 	viper.SetDefault("discovery.tlsSkipVerify", false)
-	viper.SetDefault("discovery.tlsServerName", "")
 	viper.SetDefault("discovery.registrationToken", "")
-	viper.SetDefault("discovery.service", defaultDiscoveryService)
-	viper.SetDefault("discovery.leaseSeconds", defaultDiscoveryLeaseSeconds)
 
 	viper.SetDefault("log.pretty", false)
 
@@ -152,11 +150,8 @@ func (c *Config) Normalize() {
 	}
 
 	c.Health.Listen = strings.TrimSpace(c.Health.Listen)
-	c.Health.Advertise = strings.TrimSpace(c.Health.Advertise)
 
-	c.Discovery.Target = strings.TrimSpace(c.Discovery.Target)
-	c.Discovery.TLSServerName = strings.TrimSpace(c.Discovery.TLSServerName)
-	c.Discovery.Service = strings.ToLower(strings.TrimSpace(c.Discovery.Service))
+	c.Discovery.URL = strings.TrimRight(strings.TrimSpace(c.Discovery.URL), "/")
 }
 
 // NormalizeSNI is the single SNI comparison rule: case-insensitive, trailing
@@ -213,17 +208,12 @@ func (c *Config) Validate() error {
 	}
 
 	if c.Discovery.Enabled {
-		if c.Discovery.Target == "" {
-			return fmt.Errorf("discovery.target is required when discovery is enabled")
+		parsed, err := url.Parse(c.Discovery.URL)
+		if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+			return fmt.Errorf("discovery.url must be an absolute http(s) URL, got %q", c.Discovery.URL)
 		}
 		if c.Discovery.RegistrationToken == "" {
 			return fmt.Errorf("discovery.registrationToken is required when discovery is enabled")
-		}
-		if c.Discovery.Service == "" {
-			return fmt.Errorf("discovery.service is required when discovery is enabled")
-		}
-		if c.Discovery.LeaseSeconds < 3 {
-			return fmt.Errorf("discovery.leaseSeconds must be at least three seconds")
 		}
 		if c.Relay.PublicHost == "" {
 			return fmt.Errorf("relay.publicHost is required when discovery is enabled")

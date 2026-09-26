@@ -76,6 +76,7 @@ func main() {
 
 	var registry *discovery.Registry
 	var relayCatalog *discovery.Catalog
+	var relayAPI *discovery.RelayAPI
 	var capabilityAggregator *capabilities.Aggregator
 	if cfg.Discovery.Enabled {
 		if redisClient == nil {
@@ -86,6 +87,12 @@ func main() {
 		}
 		registry = discovery.NewRegistry(redisClient, cfg.Discovery.Prefix, time.Duration(cfg.Discovery.LeaseSeconds)*time.Second)
 		relayCatalog = discovery.NewCatalog(registry, cfg.Discovery.RelayServiceName)
+		relayAPI = discovery.NewRelayAPI(
+			registry,
+			cfg.Discovery.RelayServiceName,
+			cfg.Discovery.RegistrationToken,
+			time.Duration(cfg.Discovery.LeaseSeconds)*time.Second,
+		)
 		capabilityAggregator = capabilities.NewWithTLSConfig(registry, cfg.GRPC.ClientTLSSkipVerify, cfg.Endpoints.CoreServiceNames...)
 		logging.Log.Info().Str("prefix", cfg.Discovery.Prefix).Msg("Enabled Redis-backed service discovery")
 	}
@@ -118,6 +125,13 @@ func main() {
 		},
 		MaxAge: 12 * time.Hour,
 	}))
+
+	// The relay control plane is mounted ahead of the readiness gate on purpose:
+	// relays live outside the cluster network and must be able to register,
+	// renew, and withdraw even while every core service is down.
+	if relayAPI != nil {
+		relayAPI.RegisterRoutes(r)
+	}
 
 	r.Use(health.ReadinessMiddleware(store))
 

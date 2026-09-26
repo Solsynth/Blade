@@ -143,6 +143,22 @@ func (r *Registry) Register(ctx context.Context, instance *gen.DyServiceInstance
 	return r.persist(ctx, instance, lease)
 }
 
+// RegisterSelfReported writes a lease for an instance that reports its own
+// health. Used by relays, which live outside the cluster network: the elected
+// checker cannot reach them, so their lease and health travel together in one
+// write and the caller's assertion is stored as-is.
+func (r *Registry) RegisterSelfReported(ctx context.Context, instance *gen.DyServiceInstance, lease time.Duration, healthy bool) (*gen.DyServiceInstance, time.Time, error) {
+	instance, err := normalizeInstance(instance)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	if lease <= 0 {
+		lease = r.ttl
+	}
+	instance.Healthy = healthy
+	return r.persist(ctx, instance, lease)
+}
+
 func (r *Registry) persist(ctx context.Context, instance *gen.DyServiceInstance, lease time.Duration) (*gen.DyServiceInstance, time.Time, error) {
 	expiresAt := time.Now().Add(lease)
 	record := registryInstance{Instance: instance, ExpiresAt: expiresAt.UnixMilli()}

@@ -53,24 +53,31 @@ Rules for the allowlist:
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `listen` | `":8081"` | Status listener; must be reachable by the discovery master |
-| `advertise` | `http://<publicHost>:<healthPort>` | Endpoint published for probing |
+| `listen` | `":8081"` | Status listener for operators (`/health`, `/status`) |
 
-Set `advertise` explicitly to an internal address whenever the public hostname
-is not resolvable from the discovery master.
+This listener is an operator surface, nothing else: the gateway does not dial
+it. Bind it to loopback or a management network, not to the public internet —
+`/health` dials every upstream on request.
 
 ### `[discovery]`
 
+Relays are deployed outside the cluster network, so they cannot reach the
+internal gRPC discovery service and the gateway cannot dial them. The control
+plane therefore runs over the gateway's **public HTTPS entry**: the relay
+registers, renews, and reports its own health with an authenticated `PUT`.
+
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `enabled` | `false` | Register this node; when false the node serves traffic but is never listed |
-| `target` | `""` | Discovery gRPC endpoint, e.g. `blade:7001` |
-| `useTLS` | `false` | TLS to the discovery endpoint |
+| `enabled` | `false` | Announce this node; when false the node serves traffic but is never listed |
+| `url` | `""` | Base URL of the gateway's public entry, e.g. `https://api.solian.app` |
 | `tlsSkipVerify` | `false` | Skip verification (self-signed fleets only) |
-| `tlsServerName` | `""` | Override SNI for the discovery channel |
 | `registrationToken` | `""` | Required; sent as `authorization: Bearer <token>` |
-| `service` | `"relay"` | Registry service name; the master's catalog key must match |
-| `leaseSeconds` | `30` | Requested lease (≥3) |
+
+What the gateway owns, not this file: the registry service name
+(`discovery.relayServiceName`, default `relay`), the lease length, and the
+control path (`PUT`/`DELETE <url>/relays/<id>`). A heartbeat is an idempotent
+upsert, so a changed `publicHost`, `region`, or `weight` takes effect on the
+next one, and a relay that stops heartbeating simply expires out of the catalog.
 
 ### `[log]`
 
@@ -87,9 +94,10 @@ or any validation failure, so a bad config never deploys half-working.
 
 - `relay.listen` takes client traffic. Binding `:443` needs privileges: run as
   root, or grant `CAP_NET_BIND_SERVICE`, or bind `:8443` behind a port forward.
-- `health.listen` must be reachable from the discovery master and should not be
-  exposed publicly: it dials upstreams on request, so treat it as internal.
-- `discovery.target` must be reachable from the relay.
+- `health.listen` is for operators only and should stay off the public
+  internet — `/health` dials upstreams on request.
+- Outbound: the relay needs egress to `discovery.url` (registration and
+  heartbeats) and to every upstream target in the allowlist. Nothing else.
 
 ## Deployment
 
@@ -120,7 +128,7 @@ WantedBy=multi-user.target
 
 ```bash
 docker run -d --name blade-relay \
-  -p 443:443 -p 8081:8081 \
+  -p 443:443 -p 127.0.0.1:8081:8081 \
   -v /etc/blade/relay.toml:/app/configs/relay.toml:ro \
   -e RELAY_CONFIG_PATH=/app/configs/relay.toml \
   blade-relay
@@ -130,17 +138,25 @@ Publish only `relay.listen` externally. In containers `relay.id` must be set
 explicitly: the default hostname is the container id, so replicas would
 overwrite each other in the registry.
 
+`docker-compose.relay.yml` is a working Compose version of the above, with a
+loopback-only status port, a `wget /health` healthcheck, and a 5 second stop
+grace period; it mounts a `relay.toml` you supply. `configs/relay-example.toml`
+is a fully commented starting point for that file. The relay joins no special
+network: it only needs egress to `discovery.url` and to its upstreams, so the
+Compose file asks for nothing beyond the default bridge.
+
 ### Fleet notes
 
-- One registration per `service` + `id`. Two relays on one host need distinct
-  `id` values.
+- One instance per `id`. Two relays on one host need distinct `id` values.
 - `region` and `weight` are what clients use to pick between nodes, so fill
   them in per PoP.
-- Discovery registration starts unhealthy; the master flips it healthy after its
-  probe of `health.advertise/health` succeeds, so a fresh node appears in the
-  catalog a probe cycle later.
-- Register failures retry with exponential backoff (5s doubling to a 30s cap);
-  a lost lease re-registers instead of renewing.
+- Health is the node's own report, sent with every heartbeat: the node checks
+  its upstreams the same way its `/health` endpoint does. A node whose upstream
+  is unreachable lists as `healthy: false` while it keeps heartbeating.
+- A crashed node disappears once its lease expires — no probe is needed to
+  notice, and nothing has to be reachable from the gateway.
+- Registration failures retry with exponential backoff (5s doubling to a 30s
+  cap), and a failed heartbeat re-registers instead of renewing.
 
 ## Verification
 
@@ -153,7 +169,7 @@ curl -s localhost:8081/status
 openssl s_client -connect <publicHost>:443 -servername <allowlisted sni> </dev/null | head -20
 openssl s_client -connect <publicHost>:443 -servername unlisted.example </dev/null 2>&1 | tail -3
 
-# Listed by the master
+# Listed by the master, with the health this node reports
 curl -s https://<api-host>/relays
 ```
 
@@ -162,6 +178,11 @@ presented. `/status` reports `accepted`, `rejected` (over the connection cap),
 `sniRejects` (no usable ClientHello or no upstream for the SNI), `dialErrors`,
 `bytesUp`, `bytesDown` (relayed bytes, excluding the peeked ClientHello), and
 `uptimeSeconds`.
+
+A node that starts, registers, and then stops heartbeating (for example because
+its egress to `discovery.url` broke) drops out of the catalog on its own once
+the lease expires — check the node's log for `Relay registration failed` and
+`Relay lease renewal failed` lines.
 
 ## Operations
 
@@ -178,10 +199,11 @@ Common failures:
 
 | Symptom | Cause |
 | --- | --- |
-| Process exits with a config error | Missing upstream rule, target without a port, duplicate SNI, or discovery enabled without token/`publicHost` |
+| Process exits with a config error | Missing upstream rule, target without a port, duplicate SNI, or discovery enabled without `url`/token/`publicHost` |
 | `/health` returns 503 with `failures` | The node cannot reach its own upstreams; fix origin reachability |
-| Node never appears in the catalog | Discovery disabled, wrong `service` name, rejected `registrationToken`, or `health.advertise` unreachable |
-| Catalog entry stays `healthy: false` | The master's probe of `health.advertise/health` is failing |
+| Node never appears in the catalog | Discovery disabled, rejected `registrationToken`, `discovery.url` unreachable, or the id in the path rejected by the gateway |
+| Catalog entry stays `healthy: false` | The node's own upstream check is failing; look at its `/health` for `failures` |
+| Catalog entry disappears after a while | Heartbeats stopped landing: egress to `discovery.url`, token, or gateway logs |
 | Handshakes fail for one name only | That SNI has no rule and no `defaultUpstream` is set, or the client sends no cleartext SNI (ECH) |
 | Connections reset under load | `maxConnections` reached; watch `rejected` on `/status` |
 | Connections dropped mid-flight | `idleTimeout` reached in both directions |

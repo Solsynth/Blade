@@ -16,6 +16,7 @@ import (
 type Aggregator struct {
 	store         *ReadinessStore
 	services      map[string]string
+	selfReported  map[string]struct{}
 	checkInterval time.Duration
 	checkTimeout  time.Duration
 	registry      *discovery.Registry
@@ -32,9 +33,17 @@ func NewAggregator(store *ReadinessStore, cfg *config.Config, registries ...*dis
 		}
 	}
 
+	// Relays register over the public entry and report their own health; they
+	// are outside this network, so probing them can only ever fail.
+	selfReported := make(map[string]struct{})
+	if name := strings.ToLower(strings.TrimSpace(cfg.Discovery.RelayServiceName)); name != "" {
+		selfReported[name] = struct{}{}
+	}
+
 	a := &Aggregator{
 		store:         store,
 		services:      services,
+		selfReported:  selfReported,
 		checkInterval: time.Duration(cfg.Health.CheckIntervalSeconds) * time.Second,
 		checkTimeout:  cfg.Health.CheckTimeout,
 		leaderID:      uuid.NewString(),
@@ -124,6 +133,11 @@ func (a *Aggregator) effectiveServices(ctx context.Context) map[string]string {
 
 func (a *Aggregator) checkRegisteredServices(ctx context.Context, services map[string]string) {
 	for name, fallbackURL := range services {
+		if a.isSelfReported(name) {
+			// Health arrives with the relay's own registration; the readiness
+			// snapshot picks it up through syncRegisteredReadiness.
+			continue
+		}
 		instances, err := a.registry.List(ctx, name)
 		if err != nil {
 			logging.Log.Warn().Str("service", name).Err(err).Msg("Unable to list registered instances")
@@ -177,6 +191,13 @@ func (a *Aggregator) syncRegisteredReadiness(ctx context.Context, services map[s
 func (a *Aggregator) checkService(ctx context.Context, name, baseURL string) {
 	healthy := a.probe(ctx, name, baseURL)
 	a.store.UpdateService(ServiceState{ServiceName: name, IsHealthy: healthy, LastChecked: time.Now()})
+}
+
+// isSelfReported reports whether a service owns its health instead of being
+// probed, which is the case for relays deployed outside this network.
+func (a *Aggregator) isSelfReported(name string) bool {
+	_, ok := a.selfReported[strings.ToLower(strings.TrimSpace(name))]
+	return ok
 }
 
 func (a *Aggregator) probe(ctx context.Context, name, baseURL string) bool {

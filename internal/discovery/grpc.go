@@ -102,7 +102,7 @@ func (s *GRPCService) authorize(ctx context.Context) error {
 		return status.Error(codes.Unauthenticated, "missing authorization")
 	}
 	for _, value := range md.Get("authorization") {
-		if strings.TrimSpace(strings.TrimPrefix(value, "Bearer ")) == s.registrationToken {
+		if bearerMatches(value, s.registrationToken) {
 			return nil
 		}
 	}
