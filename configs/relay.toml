@@ -1,5 +1,9 @@
 # Blade L4 relay node.
 #
+# Per-PoP file: copy it per node (docker-compose.relay.yml mounts it via
+# RELAY_CONFIG and the binary reads it via RELAY_CONFIG_PATH). Only relay.id,
+# the public host/port, and the region differ between PoPs.
+#
 # TLS is never terminated here: the relay peeks the cleartext TLS ClientHello,
 # matches the SNI against the allowlist below, and copies bytes to the origin,
 # so certificates and end-to-end encryption stay between client and origin.
