@@ -1,0 +1,60 @@
+# Gateway stack: Blade and the Redis its service registry lives in.
+#
+#   docker compose up -d
+#   curl -s localhost:6000/relays
+#
+# This is the piece relays talk to. Relays themselves run on their own hosts —
+# outside this network by design — with docker-compose.relay.yml, pointing
+# discovery.url at this gateway's public address and using the same
+# discovery.registrationToken as configs/docker.toml.
+name: blade-gateway
+
+services:
+  redis:
+    image: redis:7-alpine
+    # The registry is lease-based and rebuilt by its clients, so persistence
+    # buys nothing here.
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  gateway:
+    image: blade-gateway:latest
+    # Drop `build` if you deploy the image CI publishes.
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      CONFIG_PATH: /app/configs/docker.toml
+      # JSON logs in containers; set true for console output.
+      ZEROLOG_PRETTY: "false"
+      LOG_LEVEL: info
+    ports:
+      # HTTP entry: /meta, /health, GET /relays, and the relay control plane.
+      - "6000:6000"
+      # gRPC entry: in-network services register here. Not needed by relays.
+      - "7001:7001"
+    volumes:
+      # Holds discovery.registrationToken. Must stay readable, keep it 0600.
+      - ./configs/docker.toml:/app/configs/docker.toml:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:6000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    stop_grace_period: 10s
+
+# Relays are not part of this stack. To run one next to it for a local test,
+# use docker-compose.relay.yml and set discovery.url to
+# "http://host.docker.internal:6000" (add
+# `extra_hosts: ["host.docker.internal:host-gateway"]` on Linux) so the relay
+# reaches the gateway the same way a remote PoP would.

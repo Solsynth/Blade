@@ -1,0 +1,73 @@
+# Example gateway configuration for the Docker Compose stack
+# (docker-compose.yml). Deliberately minimal: this stack runs the gateway and
+# its Redis, so the gateway serves /meta, /health, and the relay control plane
+# plus GET /relays, and proxies no backend services.
+#
+# For a real deployment, copy this file and point CONFIG_PATH at your own.
+#
+# Relay control plane: relays register, renew, and withdraw over this gateway's
+# public HTTP(S) entry (PUT/DELETE /relays/{id}) because they live outside the
+# cluster network. registrationToken below is that credential — give every relay
+# the same value in its own discovery.registrationToken.
+
+siteUrl = "http://localhost:6000"
+
+[cache]
+serializer = "JSON"
+# Compose service name; point this at your managed Redis instead.
+redisUrl = "redis://redis:6379/0"
+
+[discovery]
+# Registry for in-network services (gRPC, port 7001 below) and for relays (the
+# public HTTP entry). Required for GET /relays to serve anything.
+enabled = true
+prefix = "blade:discovery"
+leaseSeconds = 30
+leaderLeaseSeconds = 15
+registrationToken = "change-me-before-you-expose-this"
+# Service name relays register under, and the key GET /relays lists.
+relayServiceName = "relay"
+
+# No backend services in this stack. Core services gate /meta, /health, and
+# /relays behind the readiness middleware, so an empty list keeps the gateway
+# usable standalone; add names here and matching [services] URLs when you run
+# the rest of the fleet.
+[endpoints]
+serviceNames = []
+coreServiceNames = []
+
+[health]
+checkIntervalSeconds = 2
+
+[server]
+port = "6000"
+readTimeout = 60
+writeTimeout = 60
+
+[grpc]
+# In-network services register here. Relays do not use it: they reach the public
+# HTTP entry, which is exactly what lets them run outside this network.
+enabled = true
+port = "7001"
+clientTlsSkipVerify = false
+
+[websocket]
+# The websocket route authenticates through stargate, which this stack does not
+# run. Turn it on together with authService/authGrpcTarget when it does.
+enabled = false
+path = "/ws"
+authService = "stargate"
+keepAliveSeconds = 60
+maxMessageBytes = 4096
+defaultNamespace = "dev.solsynth.solian"
+
+[nats]
+# Placeholder: this stack runs no broker. Websocket fan-out and presence need a
+# real NATS deployment, so point this at yours before enabling [websocket].
+url = "nats://nats:password@localhost:4222"
+websocketSubjectPrefix = "websocket_"
+
+[maintenance]
+enabled = false
+mode = "full"
+services = []
