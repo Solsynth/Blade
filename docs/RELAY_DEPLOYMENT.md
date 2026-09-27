@@ -49,16 +49,6 @@ Rules for the allowlist:
 - A target must not resolve back to this relay's own public address, or traffic
   loops through the relay.
 
-### `[health]`
-
-| Key | Default | Meaning |
-| --- | --- | --- |
-| `listen` | `":8081"` | Status listener for operators (`/health`, `/status`) |
-
-This listener is an operator surface, nothing else: the gateway does not dial
-it. Bind it to loopback or a management network, not to the public internet —
-`/health` dials every upstream on request.
-
 ### `[discovery]`
 
 Relays are deployed outside the cluster network, so they cannot reach the
@@ -94,10 +84,11 @@ or any validation failure, so a bad config never deploys half-working.
 
 - `relay.listen` takes client traffic. Binding `:443` needs privileges: run as
   root, or grant `CAP_NET_BIND_SERVICE`, or bind `:8443` behind a port forward.
-- `health.listen` is for operators only and should stay off the public
-  internet — `/health` dials upstreams on request.
 - Outbound: the relay needs egress to `discovery.url` (registration and
   heartbeats) and to every upstream target in the allowlist. Nothing else.
+
+The node opens no other port: it has no status listener, so health and traffic
+counters are read from its log (see Verification).
 
 ## Deployment
 
@@ -128,7 +119,7 @@ WantedBy=multi-user.target
 
 ```bash
 docker run -d --name blade-relay \
-  -p 443:443 -p 127.0.0.1:8081:8081 \
+  -p 443:443 \
   -v /etc/blade/relay.toml:/app/configs/relay.toml:ro \
   -e RELAY_CONFIG_PATH=/app/configs/relay.toml \
   blade-relay
@@ -138,10 +129,10 @@ Publish only `relay.listen` externally. In containers `relay.id` must be set
 explicitly: the default hostname is the container id, so replicas would
 overwrite each other in the registry.
 
-`docker-compose.relay.yml` is a working Compose version of the above, with a
-loopback-only status port, a `wget /health` healthcheck, and a 5 second stop
-grace period; it mounts a `relay.toml` you supply. `configs/relay-example.toml`
-is a fully commented starting point for that file. The relay joins no special
+`docker-compose.relay.yml` is a working Compose version of the above, with a 5
+second stop grace period; it mounts a `relay.toml` you supply.
+`configs/relay-example.toml` is a fully commented starting point for that file.
+The relay joins no special
 network: it only needs egress to `discovery.url` and to its upstreams, so the
 Compose file asks for nothing beyond the default bridge.
 
@@ -150,9 +141,10 @@ Compose file asks for nothing beyond the default bridge.
 - One instance per `id`. Two relays on one host need distinct `id` values.
 - `region` and `weight` are what clients use to pick between nodes, so fill
   them in per PoP.
-- Health is the node's own report, sent with every heartbeat: the node checks
-  its upstreams the same way its `/health` endpoint does. A node whose upstream
-  is unreachable lists as `healthy: false` while it keeps heartbeating.
+- Health is the node's own report, sent with every heartbeat: the node dials
+  every upstream target before each one. A node whose upstream is unreachable
+  lists as `healthy: false` while it keeps heartbeating, and logs the failing
+  targets once per transition.
 - A crashed node disappears once its lease expires — no probe is needed to
   notice, and nothing has to be reachable from the gateway.
 - Registration failures retry with exponential backoff (5s doubling to a 30s
@@ -161,9 +153,11 @@ Compose file asks for nothing beyond the default bridge.
 ## Verification
 
 ```bash
-# The relay's own view: upstreams reachable, live counters
-curl -s localhost:8081/health     # 200 "ok", or 503 {"status":"unhealthy","failures":{...}}
-curl -s localhost:8081/status
+# The relay's own view: it logs one counters line at startup, once a minute, and
+# at shutdown, and logs "Relay upstreams unreachable" with the failing targets
+# whenever that changes.
+docker logs blade-relay | grep 'Relay counters'
+docker logs blade-relay | grep 'Relay upstreams'
 
 # End-to-end TLS through the node (certificate must still be the origin's)
 openssl s_client -connect <publicHost>:443 -servername <allowlisted sni> </dev/null | head -20
@@ -174,10 +168,10 @@ curl -s https://<api-host>/relays
 ```
 
 A reject-by-default node aborts the unlisted-SNI handshake with no route
-presented. `/status` reports `accepted`, `rejected` (over the connection cap),
-`sniRejects` (no usable ClientHello or no upstream for the SNI), `dialErrors`,
-`bytesUp`, `bytesDown` (relayed bytes, excluding the peeked ClientHello), and
-`uptimeSeconds`.
+presented. The `Relay counters` line carries `accepted`, `rejected` (over the
+connection cap), `sniRejects` (no usable ClientHello or no upstream for the
+SNI), `dialErrors`, `bytesUp`, `bytesDown` (relayed bytes, excluding the peeked
+ClientHello), `active`, and `uptimeSeconds`.
 
 A node that starts, registers, and then stops heartbeating (for example because
 its egress to `discovery.url` broke) drops out of the catalog on its own once
@@ -187,7 +181,7 @@ the lease expires — check the node's log for `Relay registration failed` and
 ## Operations
 
 `SIGTERM` stops accepting, closes live relayed connections, withdraws the
-registration, and stops the status listener, inside a 5 second budget. Live
+registration, and logs a final counter line, inside a 5 second budget. Live
 connections are cut rather than drained, so drains should be done by shifting
 client traffic first. The lease expires on its own if the withdraw call fails.
 
@@ -200,11 +194,11 @@ Common failures:
 | Symptom | Cause |
 | --- | --- |
 | Process exits with a config error | Missing upstream rule, target without a port, duplicate SNI, or discovery enabled without `url`/token/`publicHost` |
-| `/health` returns 503 with `failures` | The node cannot reach its own upstreams; fix origin reachability |
+| `Relay upstreams unreachable` in the log | The node cannot reach its own upstreams; the line names the failing targets |
 | Node never appears in the catalog | Discovery disabled, rejected `registrationToken`, `discovery.url` unreachable, or the id in the path rejected by the gateway |
-| Catalog entry stays `healthy: false` | The node's own upstream check is failing; look at its `/health` for `failures` |
+| Catalog entry stays `healthy: false` | The node's own upstream check is failing; look for `Relay upstreams unreachable` in its log |
 | Catalog entry disappears after a while | Heartbeats stopped landing: egress to `discovery.url`, token, or gateway logs |
 | Handshakes fail for one name only | That SNI has no rule and no `defaultUpstream` is set, or the client sends no cleartext SNI (ECH) |
-| Connections reset under load | `maxConnections` reached; watch `rejected` on `/status` |
+| Connections reset under load | `maxConnections` reached; watch `rejected` in the counters line |
 | Connections dropped mid-flight | `idleTimeout` reached in both directions |
 | Traffic loops or hangs | An upstream target points back at this relay's own public address |

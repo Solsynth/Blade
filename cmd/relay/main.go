@@ -5,9 +5,7 @@ package main
 
 import (
 	"context"
-	"errors"
 	"net"
-	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -17,7 +15,10 @@ import (
 	"srv.solsynth.dev/sosys/blade/internal/relay"
 )
 
-const shutdownTimeout = 5 * time.Second
+const (
+	shutdownTimeout  = 5 * time.Second
+	statsLogInterval = time.Minute
+)
 
 func main() {
 	pretty := os.Getenv("ZEROLOG_PRETTY") == "true"
@@ -57,17 +58,6 @@ func main() {
 		logging.Log.Fatal().Err(err).Msg("Failed to build relay server")
 	}
 
-	healthServer := &http.Server{
-		Addr:    cfg.Health.Listen,
-		Handler: relay.NewHealthHandler(*cfg, stats),
-	}
-	go func() {
-		logging.Log.Info().Str("listen", cfg.Health.Listen).Msg("Starting relay health server")
-		if err := healthServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			logging.Log.Fatal().Err(err).Str("listen", cfg.Health.Listen).Msg("Failed to start relay health server")
-		}
-	}()
-
 	go func() {
 		logging.Log.Info().Str("listen", cfg.Relay.Listen).Msg("Relay is accepting connections")
 		if err := server.Serve(listener); err != nil {
@@ -78,10 +68,12 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	go logCounters(ctx, stats)
+
 	var registration *relay.Registration
 	if cfg.Discovery.Enabled {
-		registration, err = relay.NewRegistration(*cfg, func(ctx context.Context) bool {
-			return len(relay.UpstreamFailures(*cfg, cfg.Relay.DialTimeout)) == 0
+		registration, err = relay.NewRegistration(*cfg, func(ctx context.Context) map[string]string {
+			return relay.UpstreamFailures(*cfg, cfg.Relay.DialTimeout)
 		})
 		if err != nil {
 			logging.Log.Fatal().Err(err).Str("url", cfg.Discovery.URL).Msg("Failed to build the discovery client")
@@ -113,9 +105,39 @@ func main() {
 	if registration != nil {
 		registration.Deregister(shutdownCtx)
 	}
-	if err := healthServer.Shutdown(shutdownCtx); err != nil {
-		logging.Log.Warn().Err(err).Msg("Relay health server shutdown was incomplete")
-	}
 
+	writeCounters(stats)
 	logging.Log.Info().Msg("Relay exited")
+}
+
+// logCounters writes one counter snapshot now and then one per statsLogInterval
+// until ctx ends. The node has no status listener, so this log line is the only
+// view of live relayed traffic.
+func logCounters(ctx context.Context, stats *relay.Stats) {
+	writeCounters(stats)
+	ticker := time.NewTicker(statsLogInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			writeCounters(stats)
+		}
+	}
+}
+
+// writeCounters emits the current counters as one log line.
+func writeCounters(stats *relay.Stats) {
+	snapshot := stats.Snapshot()
+	logging.Log.Info().
+		Int64("active", snapshot.Active).
+		Int64("accepted", snapshot.Accepted).
+		Int64("rejected", snapshot.Rejected).
+		Int64("sniRejects", snapshot.SNIRejects).
+		Int64("dialErrors", snapshot.DialErrors).
+		Int64("bytesUp", snapshot.BytesUp).
+		Int64("bytesDown", snapshot.BytesDown).
+		Int64("uptimeSeconds", stats.UptimeSeconds()).
+		Msg("Relay counters")
 }

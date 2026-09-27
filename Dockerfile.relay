@@ -18,7 +18,7 @@ WORKDIR /app
 COPY --from=builder /app/relay .
 COPY --from=builder /app/configs ./configs
 
-EXPOSE 443 8081
+EXPOSE 443
 
 ENV ZEROLOG_PRETTY=true
 

@@ -19,7 +19,6 @@ import (
 
 const (
 	defaultListenAddr          = ":443"
-	defaultHealthListenAddr    = ":8081"
 	defaultSNITimeout          = 5 * time.Second
 	defaultDialTimeout         = 5 * time.Second
 	defaultMaxClientHelloBytes = 8192
@@ -28,7 +27,6 @@ const (
 // Config is the full relay configuration, loaded from a single TOML file.
 type Config struct {
 	Relay     RelayConfig     `mapstructure:"relay"`
-	Health    HealthConfig    `mapstructure:"health"`
 	Discovery DiscoveryConfig `mapstructure:"discovery"`
 	Log       LogConfig       `mapstructure:"log"`
 }
@@ -61,13 +59,6 @@ type UpstreamRule struct {
 // PublicAddress is the address clients dial and the catalog publishes.
 func (c RelayConfig) PublicAddress() string {
 	return net.JoinHostPort(c.PublicHost, strconv.Itoa(c.PublicPort))
-}
-
-// HealthConfig configures the relay's own HTTP status listener. It is an
-// operator surface only: the gateway does not probe it, because relays live
-// outside the cluster network.
-type HealthConfig struct {
-	Listen string `mapstructure:"listen"`
 }
 
 // DiscoveryConfig configures how this relay announces itself to the gateway.
@@ -106,8 +97,6 @@ func Load(path string) (*Config, error) {
 	viper.SetDefault("relay.maxClientHelloBytes", defaultMaxClientHelloBytes)
 	viper.SetDefault("relay.defaultUpstream", "")
 	viper.SetDefault("relay.upstreams", []UpstreamRule{})
-
-	viper.SetDefault("health.listen", defaultHealthListenAddr)
 
 	viper.SetDefault("discovery.enabled", false)
 	viper.SetDefault("discovery.url", "")
@@ -148,8 +137,6 @@ func (c *Config) Normalize() {
 		c.Relay.Upstreams[i].SNI = NormalizeSNI(c.Relay.Upstreams[i].SNI)
 		c.Relay.Upstreams[i].Target = strings.TrimSpace(c.Relay.Upstreams[i].Target)
 	}
-
-	c.Health.Listen = strings.TrimSpace(c.Health.Listen)
 
 	c.Discovery.URL = strings.TrimRight(strings.TrimSpace(c.Discovery.URL), "/")
 }

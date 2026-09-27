@@ -81,7 +81,7 @@ func TestRegistrationPublishesRelayInstance(t *testing.T) {
 	defer server.Close()
 
 	cfg := registrationConfig(t, server.URL)
-	registration, err := NewRegistration(cfg, func(context.Context) bool { return true })
+	registration, err := NewRegistration(cfg, func(context.Context) map[string]string { return nil })
 	if err != nil {
 		t.Fatalf("NewRegistration() error = %v", err)
 	}
@@ -124,7 +124,9 @@ func TestRegistrationReportsUnhealthyUpstreams(t *testing.T) {
 	defer server.Close()
 
 	cfg := registrationConfig(t, server.URL)
-	registration, err := NewRegistration(cfg, func(context.Context) bool { return false })
+	registration, err := NewRegistration(cfg, func(context.Context) map[string]string {
+		return map[string]string{"127.0.0.1:1": "connection refused"}
+	})
 	if err != nil {
 		t.Fatalf("NewRegistration() error = %v", err)
 	}

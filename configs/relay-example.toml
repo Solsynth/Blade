@@ -48,12 +48,6 @@ target = "10.0.0.10:443"
 sni = "relay-jp.example.com"
 target = "10.0.0.10:443"
 
-[health]
-# Operator surface only: GET /health dials the upstreams, GET /status reports
-# counters. The gateway does not dial this — relays live outside the cluster
-# network — so keep it off the public internet.
-listen = ":8081"
-
 [discovery]
 # Announce this node so clients see it via GET /relays. When false the node
 # still serves traffic but is never listed.

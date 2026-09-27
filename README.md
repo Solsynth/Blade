@@ -202,11 +202,11 @@ docker build -f Dockerfile.relay -t blade-relay .
 
 # Run
 docker run -p 6000:6000 dyson-gateway
-docker run -p 443:443 -p 127.0.0.1:8081:8081 blade-relay
+docker run -p 443:443 blade-relay
 
 # Run with custom config
 docker run -p 6000:6000 -v ./config.toml:/app/configs/config.toml dyson-gateway
-docker run -p 443:443 -p 127.0.0.1:8081:8081 -v ./relay.toml:/app/configs/relay.toml blade-relay
+docker run -p 443:443 -v ./relay.toml:/app/configs/relay.toml blade-relay
 ```
 
 ## Endpoints

@@ -20,7 +20,6 @@ func validConfig() *Config {
 			MaxClientHelloBytes: 8192,
 			Upstreams:           []UpstreamRule{{SNI: "api.solian.app", Target: "api.solian.app:443"}},
 		},
-		Health: HealthConfig{Listen: ":7481"},
 		Discovery: DiscoveryConfig{
 			URL:               "https://api.solian.app",
 			RegistrationToken: "secret",

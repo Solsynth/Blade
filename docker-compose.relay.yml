@@ -32,21 +32,9 @@ services:
       # relay.listen — the only port facing the internet. The host side is yours
       # to choose; clients dial the address in relay.publicHost/publicPort.
       - "${RELAY_PORT:-443}:443"
-      # health.listen — operators only. The gateway never dials it: relays live
-      # outside its network and report their own health over discovery.url.
-      - "127.0.0.1:${STATUS_PORT:-8081}:8081"
     volumes:
       # Holds discovery.registrationToken. Keep it 0600 and readable in here.
       - ${RELAY_CONFIG:-./configs/relay.toml}:/app/configs/relay.toml:ro
-    healthcheck:
-      # /status, not /health: /health reflects upstream reachability, which the
-      # node reports to the catalog on its own. A PoP whose origin is briefly
-      # down is still a healthy container.
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8081/status"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
-      start_period: 5s
     # SIGTERM stops accepting, cuts live connections, and withdraws the
     # registration within a 5 second budget.
     stop_grace_period: 5s

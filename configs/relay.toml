@@ -34,12 +34,6 @@ target = "api.solian.app:443"
 sni = "relay-jp.solian.app"
 target = "api.solian.app:443"
 
-# Operator surface only: GET /health dials the upstreams, GET /status reports
-# counters. Blade does not probe it — relays live outside the cluster network
-# and report their own health over the public entry instead.
-[health]
-listen = ":8081"
-
 # Registration runs over the gateway's public HTTPS entry, so this node needs
 # no cluster-network access and no inbound port beyond relay.listen. The
 # gateway owns the service name, lease, and instance path.

@@ -25,8 +25,9 @@ const (
 	maxRegistrationBody     = 4 << 10
 )
 
-// HealthFunc reports whether this relay's upstreams are reachable right now.
-type HealthFunc func(ctx context.Context) bool
+// HealthFunc reports the upstreams this relay cannot reach right now, keyed by
+// target. An empty map means every upstream answered.
+type HealthFunc func(ctx context.Context) map[string]string
 
 // Registration publishes this relay into the gateway's relay catalog and keeps
 // its lease renewed.
@@ -43,6 +44,7 @@ type Registration struct {
 
 	mu         sync.Mutex
 	registered bool
+	reported   *bool
 }
 
 // NewRegistration prepares the control client. health supplies the state sent
@@ -130,12 +132,14 @@ func (r *Registration) Run(ctx context.Context) {
 // control endpoint is an idempotent upsert, so a refreshed endpoint, region, or
 // weight travels with every heartbeat.
 func (r *Registration) publish(ctx context.Context) (time.Duration, error) {
+	failures := r.reportHealth(ctx)
+	r.logHealthChange(failures)
 	report := relayRegistration{
 		Endpoint: r.cfg.Relay.PublicHost,
 		Port:     r.cfg.Relay.PublicPort,
 		Region:   r.cfg.Relay.Region,
 		Weight:   r.cfg.Relay.Weight,
-		Healthy:  r.reportHealth(ctx),
+		Healthy:  len(failures) == 0,
 	}
 	payload, err := json.Marshal(report)
 	if err != nil {
@@ -203,14 +207,38 @@ func (r *Registration) renewLoop(ctx context.Context, interval time.Duration) ti
 	}
 }
 
-// reportHealth runs the same upstream check the /health endpoint serves.
-func (r *Registration) reportHealth(ctx context.Context) bool {
+// reportHealth runs the upstream check this node's health is built from.
+func (r *Registration) reportHealth(ctx context.Context) map[string]string {
 	if r.health == nil {
-		return true
+		return nil
 	}
 	callCtx, cancel := context.WithTimeout(ctx, registrationCallTimeout)
 	defer cancel()
 	return r.health(callCtx)
+}
+
+// logHealthChange logs a health transition with the per-target reasons. The
+// catalog stores only the boolean, so without this the failure detail would
+// never leave the node; it is logged on transition, not on every heartbeat.
+func (r *Registration) logHealthChange(failures map[string]string) {
+	healthy := len(failures) == 0
+
+	r.mu.Lock()
+	changed := r.reported == nil || *r.reported != healthy
+	r.reported = &healthy
+	r.mu.Unlock()
+
+	if !changed {
+		return
+	}
+	if healthy {
+		logging.Log.Info().Str("instance", r.cfg.Relay.ID).Msg("Relay upstreams reachable")
+		return
+	}
+	logging.Log.Warn().
+		Str("instance", r.cfg.Relay.ID).
+		Interface("failures", failures).
+		Msg("Relay upstreams unreachable")
 }
 
 // Deregister withdraws this relay so it leaves the catalog before its lease

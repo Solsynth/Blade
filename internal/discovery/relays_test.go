@@ -23,8 +23,7 @@ func TestCatalog_ListRelaysWithTCPEndpoint(t *testing.T) {
 		Service:    "relay",
 		InstanceId: "jp-01",
 		Endpoints: map[string]string{
-			"tcp":  "relay-jp.solian.app:443",
-			"http": "http://relay-jp.solian.app:8081",
+			"tcp": "relay-jp.solian.app:443",
 		},
 		Metadata: map[string]string{"region": "jp"},
 		Weight:   2,
