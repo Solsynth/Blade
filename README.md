@@ -213,7 +213,7 @@ docker run -p 443:443 -v ./relay.toml:/app/configs/relay.toml blade-relay
 
 | Endpoint                | Description                                                        |
 | ----------------------- | ------------------------------------------------------------------ |
-| `GET /health`           | Gateway health status                                              |
+| `GET /health`           | Gateway health document (`application/health+json`, never gated)   |
 | `GET /relays`           | Catalog of registered L4 relay nodes (`503` when discovery is off)  |
 | `/<service>/**`         | Proxied to backend service (e.g., `/ring/**` → `ring:5000/api/**`) |
 | `/ws`                   | Native WebSocket gateway (configurable via `websocket.path`)       |
@@ -221,6 +221,49 @@ docker run -p 443:443 -v ./relay.toml:/app/configs/relay.toml blade-relay
 | `/activitypub/**`       | ActivityPub (configurable via `routes`)                            |
 | `/swagger/<service>/**` | Swagger docs → service                                             |
 | `gRPC DyServiceDiscoveryService` | Register, renew, remove, and resolve service instances             |
+
+### Health Checks
+
+`GET /health` answers with a health check document in the
+[health+json](https://datatracker.ietf.org/doc/html/draft-inadarei-api-health-check-06)
+format and is mounted ahead of the readiness gate, so it reports *why* the
+gateway is not ready instead of the gate's generic `503`. `status` is `fail`
+(HTTP `503`) when any core service is unhealthy, `warn` (HTTP `200`) when only
+non-core services are, and `pass` (HTTP `200`) otherwise. Each tracked service
+appears under `checks` as a one-element array.
+
+```json
+{
+  "status": "warn",
+  "serviceId": "blade",
+  "description": "Solar Network API gateway",
+  "output": "one or more non-core services are unhealthy",
+  "checks": {
+    "ring": [
+      {
+        "componentId": "ring",
+        "componentType": "component",
+        "status": "pass",
+        "time": "2026-10-04T11:42:16Z"
+      }
+    ],
+    "sphere": [
+      {
+        "componentId": "sphere",
+        "componentType": "component",
+        "status": "fail",
+        "time": "2026-10-04T11:42:16Z"
+      }
+    ]
+  },
+  "links": {
+    "self": "https://api.solian.app/health"
+  }
+}
+```
+
+`Cache-Control: max-age` mirrors `health.checkIntervalSeconds`, the period at
+which the aggregator refreshes the snapshot.
 
 ### WebSocket Authentication Notes
 

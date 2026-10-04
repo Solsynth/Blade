@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
@@ -126,12 +127,21 @@ func main() {
 		MaxAge: 12 * time.Hour,
 	}))
 
-	// The relay control plane is mounted ahead of the readiness gate on purpose:
-	// relays live outside the cluster network and must be able to register,
-	// renew, and withdraw even while every core service is down.
+	// The relay control plane and the health endpoint are mounted ahead of the
+	// readiness gate on purpose: relays live outside the cluster network and
+	// must be able to register, renew, and withdraw even while every core
+	// service is down, and /health has to answer with a health document
+	// (draft-inadarei-api-health-check-06) rather than the gate's generic 503.
 	if relayAPI != nil {
 		relayAPI.RegisterRoutes(r)
 	}
+
+	r.GET("/health", func(c *gin.Context) {
+		response := health.BuildResponse(store, healthSelfURL(c))
+		c.Header("Content-Type", health.MediaTypeHealthJSON)
+		c.Header("Cache-Control", fmt.Sprintf("max-age=%d", cfg.Health.CheckIntervalSeconds))
+		c.JSON(response.HTTPStatus(), response)
+	})
 
 	r.Use(health.ReadinessMiddleware(store))
 
@@ -334,34 +344,6 @@ func main() {
 		c.JSON(http.StatusOK, gin.H{"relays": relays})
 	})
 
-	r.GET("/health", func(c *gin.Context) {
-		states := store.GetAllStates()
-		coreServiceHealthy := store.IsCoreServiceHealthy()
-
-		allHealthy := true
-		for _, state := range states {
-			if !state.IsHealthy {
-				allHealthy = false
-				break
-			}
-		}
-
-		if !coreServiceHealthy {
-			c.JSON(http.StatusServiceUnavailable, gin.H{
-				"status":     states,
-				"ready":      coreServiceHealthy,
-				"aggregated": allHealthy,
-			})
-			return
-		}
-
-		c.JSON(http.StatusOK, gin.H{
-			"status":     states,
-			"ready":      coreServiceHealthy,
-			"aggregated": allHealthy,
-		})
-	})
-
 	addr := ":" + cfg.Server.Port
 	srv := &http.Server{
 		Addr:         addr,
@@ -437,6 +419,35 @@ func main() {
 	}
 
 	logging.Log.Info().Msg("Server exited")
+}
+
+// healthSelfURL rebuilds the absolute URL the client used to reach the
+// gateway, honouring the headers a public edge proxy sets, so the health
+// document can publish it as its "self" link.
+func healthSelfURL(c *gin.Context) string {
+	scheme := "http"
+	if c.Request.TLS != nil {
+		scheme = "https"
+	}
+	if proto := forwardedHeader(c, "X-Forwarded-Proto"); proto != "" {
+		scheme = proto
+	}
+	host := forwardedHeader(c, "X-Forwarded-Host")
+	if host == "" {
+		host = c.Request.Host
+	}
+	if host == "" {
+		return c.Request.URL.Path
+	}
+	return scheme + "://" + host + c.Request.URL.Path
+}
+
+func forwardedHeader(c *gin.Context, name string) string {
+	value := c.GetHeader(name)
+	if value == "" {
+		return ""
+	}
+	return strings.TrimSpace(strings.Split(value, ",")[0])
 }
 
 func connectNATSWithRetry(natsURL string) (*eb.Bus, error) {

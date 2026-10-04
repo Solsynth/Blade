@@ -28,10 +28,10 @@ registrationToken = "change-me-before-you-expose-this"
 # Service name relays register under, and the key GET /relays lists.
 relayServiceName = "relay"
 
-# No backend services in this stack. Core services gate /meta, /health, and
-# /relays behind the readiness middleware, so an empty list keeps the gateway
+# No backend services in this stack. Core services gate /meta and /relays
+# behind the readiness middleware, so an empty list keeps the gateway
 # usable standalone; add names here and matching [services] URLs when you run
-# the rest of the fleet.
+# the rest of the fleet. /health is never gated: it reports readiness itself.
 [endpoints]
 serviceNames = []
 coreServiceNames = []
