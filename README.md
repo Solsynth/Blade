@@ -214,6 +214,7 @@ docker run -p 443:443 -v ./relay.toml:/app/configs/relay.toml blade-relay
 | Endpoint                | Description                                                        |
 | ----------------------- | ------------------------------------------------------------------ |
 | `GET /health`           | Gateway health document (`application/health+json`, never gated)   |
+| `GET /health/{service}` | Per-service health document (`200` pass, `503` fail, `404` unknown) |
 | `GET /relays`           | Catalog of registered L4 relay nodes (`503` when discovery is off)  |
 | `/<service>/**`         | Proxied to backend service (e.g., `/ring/**` → `ring:5000/api/**`) |
 | `/ws`                   | Native WebSocket gateway (configurable via `websocket.path`)       |
@@ -244,7 +245,8 @@ appears under `checks` as a one-element array.
         "componentId": "ring",
         "componentType": "component",
         "status": "pass",
-        "time": "2026-10-04T11:42:16Z"
+        "time": "2026-10-04T11:42:16Z",
+        "links": { "self": "https://api.solian.app/health/ring" }
       }
     ],
     "sphere": [
@@ -264,6 +266,31 @@ appears under `checks` as a one-element array.
 
 `Cache-Control: max-age` mirrors `health.checkIntervalSeconds`, the period at
 which the aggregator refreshes the snapshot.
+
+`GET /health/{service}` serves the same document scoped to one service — it is
+the target a status page polls, and each `checks` entry publishes it as its
+`links.self`, so the roster can be discovered from the aggregate document
+alone. An unknown service is a failing document answered with `404`.
+
+```json
+{
+  "status": "fail",
+  "serviceId": "blade",
+  "output": "service \"sphere\" is unhealthy",
+  "checks": {
+    "sphere": [
+      {
+        "componentId": "sphere",
+        "componentType": "component",
+        "status": "fail",
+        "time": "2026-10-04T04:07:13Z",
+        "links": { "self": "https://api.solian.app/health/sphere" }
+      }
+    ]
+  },
+  "links": { "self": "https://api.solian.app/health/sphere" }
+}
+```
 
 ### WebSocket Authentication Notes
 

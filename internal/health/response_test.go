@@ -13,7 +13,7 @@ func TestBuildResponsePassesWhenEverythingIsHealthy(t *testing.T) {
 	store.UpdateService(ServiceState{ServiceName: "ring", IsHealthy: true, LastChecked: checkedAt})
 	store.UpdateService(ServiceState{ServiceName: "sphere", IsHealthy: true, LastChecked: checkedAt})
 
-	response := BuildResponse(store, "https://solian.app/health")
+	response := BuildResponse(store, "https://solian.app")
 
 	if response.Status != StatusPass {
 		t.Fatalf("status = %q, want %q", response.Status, StatusPass)
@@ -39,6 +39,9 @@ func TestBuildResponsePassesWhenEverythingIsHealthy(t *testing.T) {
 	}
 	if response.Links["self"] != "https://solian.app/health" {
 		t.Fatalf("links = %+v, want the self link", response.Links)
+	}
+	if got := ring[0].Links["self"]; got != "https://solian.app/health/ring" {
+		t.Fatalf("check links = %+v, want %q", ring[0].Links, "https://solian.app/health/ring")
 	}
 }
 
@@ -98,7 +101,7 @@ func TestBuildResponseMarshalsDraftFieldNames(t *testing.T) {
 	store.UpdateService(ServiceState{ServiceName: "ring", IsHealthy: true, LastChecked: time.Unix(0, 0).UTC()})
 	store.UpdateService(ServiceState{ServiceName: "sphere", IsHealthy: false, LastChecked: time.Unix(0, 0).UTC()})
 
-	payload, err := json.Marshal(BuildResponse(store, "https://solian.app/health"))
+	payload, err := json.Marshal(BuildResponse(store, "https://solian.app"))
 	if err != nil {
 		t.Fatalf("Marshal() error = %v", err)
 	}
@@ -130,5 +133,64 @@ func TestBuildResponseMarshalsDraftFieldNames(t *testing.T) {
 	}
 	if MediaTypeHealthJSON != "application/health+json" {
 		t.Fatalf("MediaTypeHealthJSON = %q", MediaTypeHealthJSON)
+	}
+}
+
+func TestBuildServiceResponsePassesForAHealthyService(t *testing.T) {
+	store := NewReadinessStore([]string{"ring"})
+	store.UpdateService(ServiceState{ServiceName: "ring", IsHealthy: true, LastChecked: time.Unix(0, 0).UTC()})
+	store.UpdateService(ServiceState{ServiceName: "sphere", IsHealthy: false, LastChecked: time.Unix(0, 0).UTC()})
+
+	response, tracked := BuildServiceResponse(store, "ring", "https://api.solian.app")
+
+	if !tracked {
+		t.Fatal("ring is tracked, want tracked = true")
+	}
+	if response.Status != StatusPass || response.HTTPStatus() != http.StatusOK {
+		t.Fatalf("response = %+v, want a passing document", response)
+	}
+	if len(response.Checks) != 1 {
+		t.Fatalf("checks = %+v, want only the requested service", response.Checks)
+	}
+	if response.Checks["ring"][0].Status != StatusPass {
+		t.Fatalf("check = %+v, want pass", response.Checks["ring"][0])
+	}
+	if response.Links["self"] != "https://api.solian.app/health/ring" {
+		t.Fatalf("links = %+v, want the per-service self link", response.Links)
+	}
+}
+
+func TestBuildServiceResponseFailsForAnUnhealthyService(t *testing.T) {
+	store := NewReadinessStore([]string{"ring"})
+	store.UpdateService(ServiceState{ServiceName: "ring", IsHealthy: true, LastChecked: time.Unix(0, 0).UTC()})
+	store.UpdateService(ServiceState{ServiceName: "sphere", IsHealthy: false, LastChecked: time.Unix(0, 0).UTC()})
+
+	response, tracked := BuildServiceResponse(store, "sphere", "https://api.solian.app")
+
+	if !tracked {
+		t.Fatal("sphere is tracked, want tracked = true")
+	}
+	if response.Status != StatusFail || response.HTTPStatus() != http.StatusServiceUnavailable {
+		t.Fatalf("response = %+v, want a failing document", response)
+	}
+	if response.Output == "" {
+		t.Fatal("expected output to describe the failing service")
+	}
+}
+
+func TestBuildServiceResponseReportsUntrackedServices(t *testing.T) {
+	store := NewReadinessStore([]string{"ring"})
+	store.UpdateService(ServiceState{ServiceName: "ring", IsHealthy: true, LastChecked: time.Unix(0, 0).UTC()})
+
+	response, tracked := BuildServiceResponse(store, "ghost", "https://api.solian.app")
+
+	if tracked {
+		t.Fatal("ghost is not tracked, want tracked = false")
+	}
+	if response.Status != StatusFail {
+		t.Fatalf("status = %q, want %q so the caller can answer 404", response.Status, StatusFail)
+	}
+	if response.Output == "" {
+		t.Fatal("expected output to name the unknown service")
 	}
 }

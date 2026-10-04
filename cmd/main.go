@@ -137,10 +137,24 @@ func main() {
 	}
 
 	r.GET("/health", func(c *gin.Context) {
-		response := health.BuildResponse(store, healthSelfURL(c))
+		response := health.BuildResponse(store, healthBaseURL(c))
 		c.Header("Content-Type", health.MediaTypeHealthJSON)
 		c.Header("Cache-Control", fmt.Sprintf("max-age=%d", cfg.Health.CheckIntervalSeconds))
 		c.JSON(response.HTTPStatus(), response)
+	})
+
+	// The per-service form of the same document. It is public on purpose: it is
+	// what a status page (and the per-check "self" links) polls, and it must
+	// report an unhealthy service as a failing document rather than a bare code.
+	r.GET("/health/:service", func(c *gin.Context) {
+		response, tracked := health.BuildServiceResponse(store, c.Param("service"), healthBaseURL(c))
+		status := response.HTTPStatus()
+		if !tracked {
+			status = http.StatusNotFound
+		}
+		c.Header("Content-Type", health.MediaTypeHealthJSON)
+		c.Header("Cache-Control", fmt.Sprintf("max-age=%d", cfg.Health.CheckIntervalSeconds))
+		c.JSON(status, response)
 	})
 
 	r.Use(health.ReadinessMiddleware(store))
@@ -421,10 +435,11 @@ func main() {
 	logging.Log.Info().Msg("Server exited")
 }
 
-// healthSelfURL rebuilds the absolute URL the client used to reach the
-// gateway, honouring the headers a public edge proxy sets, so the health
-// document can publish it as its "self" link.
-func healthSelfURL(c *gin.Context) string {
+// healthBaseURL rebuilds the origin the client used to reach the gateway,
+// honouring the headers a public edge proxy sets, so the health document can
+// publish absolute "self" links. It is empty when no host is known, in which
+// case the document carries no links rather than a guessed one.
+func healthBaseURL(c *gin.Context) string {
 	scheme := "http"
 	if c.Request.TLS != nil {
 		scheme = "https"
@@ -437,9 +452,9 @@ func healthSelfURL(c *gin.Context) string {
 		host = c.Request.Host
 	}
 	if host == "" {
-		return c.Request.URL.Path
+		return ""
 	}
-	return scheme + "://" + host + c.Request.URL.Path
+	return scheme + "://" + host
 }
 
 func forwardedHeader(c *gin.Context, name string) string {
