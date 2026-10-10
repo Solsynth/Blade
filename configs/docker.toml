@@ -44,6 +44,13 @@ port = "6000"
 readTimeout = 60
 writeTimeout = 60
 
+[proxy]
+# This stack publishes the gateway directly, so it is the edge: the client
+# address comes from the connection and no forwarded header is trusted. Put the
+# gateway behind Caddy/Cloudflare in production and set this to the number of
+# proxies they add (Caddy only 1, Cloudflare -> Caddy 2).
+trustedProxyHops = 0
+
 [grpc]
 # In-network services register here. Relays do not use it: they reach the public
 # HTTP entry, which is exactly what lets them run outside this network.

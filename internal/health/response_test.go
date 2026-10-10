@@ -136,6 +136,51 @@ func TestBuildResponseMarshalsDraftFieldNames(t *testing.T) {
 	}
 }
 
+func TestBuildSummaryResponseOmitsChecks(t *testing.T) {
+	store := NewReadinessStore([]string{"ring"})
+	store.UpdateService(ServiceState{ServiceName: "ring", IsHealthy: true, LastChecked: time.Now()})
+	store.UpdateService(ServiceState{ServiceName: "sphere", IsHealthy: true, LastChecked: time.Now()})
+
+	response := BuildSummaryResponse(store)
+
+	if response.Status != StatusPass || response.HTTPStatus() != http.StatusOK {
+		t.Fatalf("response = %+v, want a passing summary", response)
+	}
+	if response.Checks != nil {
+		t.Fatalf("checks = %+v, want no per-service map", response.Checks)
+	}
+
+	payload, err := json.Marshal(response)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(payload, &document); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if _, ok := document["checks"]; ok {
+		t.Fatalf("payload = %s, want no checks key", payload)
+	}
+}
+
+func TestBuildSummaryResponseFailsWhenCoreServiceIsDown(t *testing.T) {
+	store := NewReadinessStore([]string{"ring"})
+	store.UpdateService(ServiceState{ServiceName: "ring", IsHealthy: false, LastChecked: time.Now()})
+	store.UpdateService(ServiceState{ServiceName: "sphere", IsHealthy: true, LastChecked: time.Now()})
+
+	response := BuildSummaryResponse(store)
+
+	if response.Status != StatusFail || response.HTTPStatus() != http.StatusServiceUnavailable {
+		t.Fatalf("response = %+v, want a failing summary", response)
+	}
+	if response.Output == "" {
+		t.Fatal("expected output to describe the failure")
+	}
+	if response.Checks != nil {
+		t.Fatalf("checks = %+v, want no per-service map", response.Checks)
+	}
+}
+
 func TestBuildServiceResponsePassesForAHealthyService(t *testing.T) {
 	store := NewReadinessStore([]string{"ring"})
 	store.UpdateService(ServiceState{ServiceName: "ring", IsHealthy: true, LastChecked: time.Unix(0, 0).UTC()})

@@ -15,12 +15,13 @@ import (
 )
 
 type Proxy struct {
-	serviceURLs map[string]string
-	routes      []config.RouteRule
-	maintenance config.MaintenanceConfig
-	blockedSet  map[string]struct{}
-	registry    *discovery.Registry
-	transport   http.RoundTripper
+	serviceURLs      map[string]string
+	routes           []config.RouteRule
+	maintenance      config.MaintenanceConfig
+	blockedSet       map[string]struct{}
+	registry         *discovery.Registry
+	transport        http.RoundTripper
+	trustedProxyHops int
 }
 
 var defaultProxyTransport = newProxyTransport()
@@ -47,11 +48,12 @@ func New(cfg *config.Config, registries ...*discovery.Registry) *Proxy {
 	}
 
 	p := &Proxy{
-		serviceURLs: serviceURLs,
-		routes:      cfg.Routes,
-		maintenance: cfg.Maintenance,
-		blockedSet:  toServiceSet(cfg.Maintenance.Services),
-		transport:   newProxyTransport(),
+		serviceURLs:      serviceURLs,
+		routes:           cfg.Routes,
+		maintenance:      cfg.Maintenance,
+		blockedSet:       toServiceSet(cfg.Maintenance.Services),
+		transport:        newProxyTransport(),
+		trustedProxyHops: cfg.Proxy.TrustedProxyHops,
 	}
 	if len(registries) > 0 {
 		p.registry = registries[0]
@@ -281,7 +283,16 @@ func (p *Proxy) proxyRequest(c *gin.Context, target string) {
 		return
 	}
 
-	director := func(req *http.Request) {
+	// Resolve the client address and the original request origin from the
+	// connection (plus the trusted edge in front of the gateway). Client-supplied
+	// values are never trusted: the ReverseProxy's Rewrite hook drops the
+	// inbound forwarding headers and rebuilds them below.
+	clientIP := ResolveClientIP(c.Request, p.trustedProxyHops)
+	scheme := requestScheme(c.Request, p.trustedProxyHops)
+	host := requestHost(c.Request, p.trustedProxyHops)
+
+	rewrite := func(pr *httputil.ProxyRequest) {
+		req := pr.Out
 		originalPath := req.URL.Path
 
 		req.URL.Scheme = targetURL.Scheme
@@ -305,6 +316,12 @@ func (p *Proxy) proxyRequest(c *gin.Context, target string) {
 
 		req.Host = req.URL.Host
 
+		stripClientTrustHeaders(req.Header)
+		req.Header.Set("X-Real-IP", clientIP)
+		req.Header.Set("X-Forwarded-For", clientIP)
+		req.Header.Set("X-Forwarded-Proto", scheme)
+		req.Header.Set("X-Forwarded-Host", host)
+
 		logging.Log.Debug().
 			Str("original", originalPath).
 			Str("target", req.URL.Path).
@@ -319,9 +336,118 @@ func (p *Proxy) proxyRequest(c *gin.Context, target string) {
 	}
 
 	proxy := &httputil.ReverseProxy{
-		Director:  director,
+		Rewrite:   rewrite,
 		Transport: transport,
 	}
 
 	proxy.ServeHTTP(c.Writer, c.Request)
+}
+
+// clientTrustHeaderPrefixes are the header namespaces that only the gateway may
+// populate. A backend service must never read them from a client, so every
+// forwarded request has them stripped before the gateway sets its own.
+//
+// X-Forwarded-* is included because a backend that trusts it (directly or
+// through a library) would otherwise accept a spoofed client address or
+// scheme; the gateway rebuilds the three headers it forwards from the
+// connection.
+var clientTrustHeaderPrefixes = []string{
+	"x-account-",
+	"x-user-",
+	"x-auth-",
+	"x-real-ip",
+	"x-forwarded-",
+}
+
+// stripClientTrustHeaders removes every header a client could use to forge an
+// identity or a forwarding chain. Comparison is case-insensitive because the
+// canonical form of a few of these (X-Real-IP, X-Forwarded-For) is not the
+// literal spelling.
+func stripClientTrustHeaders(header http.Header) {
+	for name := range header {
+		lower := strings.ToLower(name)
+		for _, prefix := range clientTrustHeaderPrefixes {
+			if strings.HasPrefix(lower, prefix) {
+				header.Del(name)
+				break
+			}
+		}
+	}
+}
+
+// ResolveClientIP returns the client address attributable to the request. With
+// no trusted proxy in front (trustedProxyHops == 0) that is the peer that
+// opened the connection; otherwise it is read from X-Forwarded-For, skipping
+// the trustedProxyHops proxies that appended to it, so the value is one the
+// outermost trusted proxy observed rather than one a client supplied.
+//
+// It is the single source of truth for the client address: both the forwarded
+// headers and the access log use it, so a spoofed X-Forwarded-For can never
+// reach a backend or the audit trail.
+func ResolveClientIP(r *http.Request, trustedProxyHops int) string {
+	if trustedProxyHops > 0 {
+		if client := forwardedClientIP(r.Header.Get("X-Forwarded-For"), trustedProxyHops); client != "" {
+			return client
+		}
+	}
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return host
+	}
+	return r.RemoteAddr
+}
+
+// forwardedClientIP returns the address recorded trustedProxyHops entries from
+// the right of an X-Forwarded-For value. Each trusted proxy appends the peer it
+// saw, so that position holds what the outermost trusted proxy observed; every
+// entry to its left is client-supplied and ignored. It returns "" when the
+// header does not carry enough entries to reach a trusted position.
+func forwardedClientIP(value string, trustedProxyHops int) string {
+	if trustedProxyHops < 1 {
+		return ""
+	}
+	entries := make([]string, 0, 8)
+	for _, part := range strings.Split(value, ",") {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			entries = append(entries, trimmed)
+		}
+	}
+	if len(entries) < trustedProxyHops {
+		return ""
+	}
+	return entries[len(entries)-trustedProxyHops]
+}
+
+// requestScheme is the scheme the client used to reach the gateway. It comes
+// from the trusted edge when one is configured, and from the connection
+// otherwise, never from an unvalidated header.
+func requestScheme(r *http.Request, trustedProxyHops int) string {
+	if trustedProxyHops > 0 {
+		if proto := firstHeaderValue(r.Header.Get("X-Forwarded-Proto")); proto != "" {
+			return proto
+		}
+	}
+	if r.TLS != nil {
+		return "https"
+	}
+	return "http"
+}
+
+// requestHost is the host the client dialled, taken from the trusted edge when
+// one is configured and from the request line otherwise.
+func requestHost(r *http.Request, trustedProxyHops int) string {
+	if trustedProxyHops > 0 {
+		if host := firstHeaderValue(r.Header.Get("X-Forwarded-Host")); host != "" {
+			return host
+		}
+	}
+	return r.Host
+}
+
+// firstHeaderValue returns the leftmost comma-separated value of a header,
+// which is the one the outermost proxy wrote.
+func firstHeaderValue(value string) string {
+	if value == "" {
+		return ""
+	}
+	return strings.TrimSpace(strings.Split(value, ",")[0])
 }

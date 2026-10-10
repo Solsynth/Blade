@@ -46,10 +46,14 @@ reach the gateway's public HTTPS entry instead:
 | --- | --- | --- |
 | `PUT` | `/relays/{id}` | Register or renew, carrying the relay's own health report |
 | `DELETE` | `/relays/{id}` | Withdraw before the lease ends |
+| `GET` | `/relays` | Public client-facing catalog: the host, port, region, weight, and health clients dial and sort by |
 
-Both require `authorization: Bearer <discovery.registrationToken>`. Registering
-an instance publishes a single `tcp` endpoint — the `host:port` clients dial —
-plus `region` in `metadata`, and uses `weight` for client-side selection. The
+The control plane (`PUT`/`DELETE`) requires
+`authorization: Bearer <discovery.registrationToken>`; `GET /relays` is
+deliberately anonymous because it is the client's relay-selection contract.
+Registering an instance publishes a single `tcp` endpoint — the `host:port`
+clients dial — plus `region` in `metadata`, and uses `weight` for client-side
+selection. The
 service name, lease, and path belong to the gateway
 (`discovery.relayServiceName`, default `relay`), so a relay cannot announce
 itself as some other service.
@@ -63,8 +67,8 @@ stops reporting expires out of the catalog. The checker skips
 `discovery.relayServiceName` entirely, so a probe can never overwrite a
 self-report.
 
-Blade exposes those instances at `GET /relays`, built from the registry service
-named by `discovery.relayServiceName`:
+Blade exposes those instances at the public, client-facing `GET /relays`, built
+from the registry service named by `discovery.relayServiceName`:
 
 ```json
 {"relays":[{"id":"jp-01","endpoint":"relay-jp.solian.app","port":443,"region":"jp","weight":1,"healthy":true}]}

@@ -163,7 +163,9 @@ docker logs blade-relay | grep 'Relay upstreams'
 openssl s_client -connect <publicHost>:443 -servername <allowlisted sni> </dev/null | head -20
 openssl s_client -connect <publicHost>:443 -servername unlisted.example </dev/null 2>&1 | tail -3
 
-# Listed by the master, with the health this node reports
+# Listed by the master, with the health this node reports. GET /relays is the
+# public, anonymous client-facing discovery contract: clients dial the returned
+# host:port and sort by region, weight, and health, so it is not gated.
 curl -s https://<api-host>/relays
 ```
 

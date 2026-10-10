@@ -15,11 +15,20 @@ type Config struct {
 	NATS        NatsConfig        `mapstructure:"nats"`
 	Health      HealthConfig      `mapstructure:"health"`
 	Server      ServerConfig      `mapstructure:"server"`
+	Proxy       ProxyConfig       `mapstructure:"proxy"`
 	GRPC        GrpcServerConfig  `mapstructure:"grpc"`
 	WebSocket   WebSocketConfig   `mapstructure:"websocket"`
 	Routes      []RouteRule       `mapstructure:"routes"`
 	Maintenance MaintenanceConfig `mapstructure:"maintenance"`
 	SiteURL     string            `mapstructure:"siteUrl"`
+}
+
+// ProxyConfig describes the edge in front of the gateway. Blade always rebuilds
+// the forwarded headers it sends upstream from the actual connection; the hop
+// count tells it how many trusted reverse proxies append to X-Forwarded-For, so
+// it can recover the client address instead of the proxy's.
+type ProxyConfig struct {
+	TrustedProxyHops int `mapstructure:"trustedProxyHops"`
 }
 
 type EndpointsConfig struct {
@@ -114,6 +123,7 @@ func Load(configPath string) (*Config, error) {
 	viper.SetDefault("server.port", "6000")
 	viper.SetDefault("server.readTimeout", 60*time.Second)
 	viper.SetDefault("server.writeTimeout", 60*time.Second)
+	viper.SetDefault("proxy.trustedProxyHops", 0)
 	viper.SetDefault("grpc.enabled", true)
 	viper.SetDefault("grpc.port", "7001")
 	viper.SetDefault("grpc.clientTlsSkipVerify", false)

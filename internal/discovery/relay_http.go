@@ -153,7 +153,7 @@ func (a *RelayAPI) authorize(c *gin.Context) bool {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "relay registration is not configured"})
 		return false
 	}
-	if !bearerMatches(c.GetHeader("Authorization"), a.token) {
+	if !BearerMatches(c.GetHeader("Authorization"), a.token) {
 		c.Header("WWW-Authenticate", "Bearer")
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid relay credential"})
 		return false

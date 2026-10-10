@@ -136,10 +136,14 @@ the catalog. Blade serves the resulting list at `GET /relays`:
 {"relays":[{"id":"jp-01","endpoint":"relay-jp.solian.app","port":443,"region":"jp","weight":1,"healthy":true}]}
 ```
 
-`GET /relays` returns `503` when `discovery.enabled` is false. The gateway owns
-the registry service name (`discovery.relayServiceName`, default `relay`).
-Those control routes are mounted ahead of the readiness gate so a relay can
-register while core services are unhealthy. See
+`GET /relays` is the intentionally public, client-facing discovery contract:
+clients fetch it anonymously and dial the returned `endpoint:port`, sorting the
+picker by `region`, `weight`, and `healthy`, so those fields are part of the
+client API and the route is not gated. It returns `503` when
+`discovery.enabled` is false. The gateway owns the registry service name
+(`discovery.relayServiceName`, default `relay`). Those routes are mounted ahead
+of the readiness gate so a relay can register while core services are unhealthy.
+See
 [RELAY_DEPLOYMENT.md](docs/RELAY_DEPLOYMENT.md) for the node's deployment,
 configuration reference, and operations.
 
@@ -213,9 +217,9 @@ docker run -p 443:443 -v ./relay.toml:/app/configs/relay.toml blade-relay
 
 | Endpoint                | Description                                                        |
 | ----------------------- | ------------------------------------------------------------------ |
-| `GET /health`           | Gateway health document (`application/health+json`, never gated)   |
+| `GET /health`           | Gateway health document; per-service `checks` only with the discovery credential |
 | `GET /health/{service}` | Per-service health document (`200` pass, `503` fail, `404` unknown) |
-| `GET /relays`           | Catalog of registered L4 relay nodes (`503` when discovery is off)  |
+| `GET /relays`           | Public client-facing catalog of registered L4 relay nodes |
 | `/<service>/**`         | Proxied to backend service (e.g., `/ring/**` → `ring:5000/api/**`) |
 | `/ws`                   | Native WebSocket gateway (configurable via `websocket.path`)       |
 | `/.well-known/*`        | .well-known endpoints (configurable via `routes`)                  |
@@ -230,8 +234,13 @@ docker run -p 443:443 -v ./relay.toml:/app/configs/relay.toml blade-relay
 format and is mounted ahead of the readiness gate, so it reports *why* the
 gateway is not ready instead of the gate's generic `503`. `status` is `fail`
 (HTTP `503`) when any core service is unhealthy, `warn` (HTTP `200`) when only
-non-core services are, and `pass` (HTTP `200`) otherwise. Each tracked service
-appears under `checks` as a one-element array.
+non-core services are, and `pass` (HTTP `200`) otherwise. The per-service
+`checks` map names the internal topology, so it is included only for a caller
+presenting the discovery credential (`Authorization: Bearer
+<discovery.registrationToken>`); every other caller gets the overall document
+(no `checks`), which is enough to report readiness without publishing the
+roster. When the credential is included, each tracked service appears under
+`checks` as a one-element array.
 
 ```json
 {

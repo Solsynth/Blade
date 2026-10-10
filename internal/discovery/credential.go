@@ -5,11 +5,11 @@ import (
 	"strings"
 )
 
-// bearerMatches reports whether an Authorization header carries token.
+// BearerMatches reports whether an Authorization header carries token.
 //
 // The comparison is constant time and an empty configured token never matches,
 // so a deployment that forgot to set one cannot accept anonymous registrations.
-func bearerMatches(header, token string) bool {
+func BearerMatches(header, token string) bool {
 	token = strings.TrimSpace(token)
 	value := strings.TrimSpace(header)
 	if len(value) >= len("bearer ") && strings.EqualFold(value[:len("bearer ")], "bearer ") {

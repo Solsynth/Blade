@@ -60,6 +60,14 @@ port = "6000"
 readTimeout = 60
 writeTimeout = 60
 
+[proxy]
+# Number of trusted reverse proxies sitting in front of the gateway that append
+# to X-Forwarded-For. 0 means Blade is the edge and the client address is taken
+# from the connection. Behind Caddy only, set 1; behind Cloudflare -> Caddy, set
+# 2. Blade always strips client-supplied identity and forwarding headers and
+# rebuilds them, so this only controls which X-Forwarded-For hop it believes.
+trustedProxyHops = 0
+
 [grpc]
 enabled = true
 port = "7001"

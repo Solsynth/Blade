@@ -112,8 +112,15 @@ func main() {
 	var wsPushPublisher wsgateway.PushPublisher
 
 	r := gin.New()
+	// Blade resolves the client address itself (proxy.ResolveClientIP) for both
+	// the forwarded headers and the access log, so gin must not trust any
+	// client-supplied X-Forwarded-For: a spoofed value would otherwise reach
+	// c.ClientIP() and any handler that uses it.
+	if err := r.SetTrustedProxies(nil); err != nil {
+		logging.Log.Fatal().Err(err).Msg("Failed to disable gin trusted proxy headers")
+	}
 	r.Use(gin.Recovery())
-	r.Use(gin.Logger())
+	r.Use(gin.LoggerWithFormatter(accessLogFormatter(cfg.Proxy.TrustedProxyHops)))
 	isDebugMode := gin.Mode() == gin.DebugMode
 
 	r.Use(cors.New(cors.Config{
@@ -136,26 +143,7 @@ func main() {
 		relayAPI.RegisterRoutes(r)
 	}
 
-	r.GET("/health", func(c *gin.Context) {
-		response := health.BuildResponse(store, healthBaseURL(c))
-		c.Header("Content-Type", health.MediaTypeHealthJSON)
-		c.Header("Cache-Control", fmt.Sprintf("max-age=%d", cfg.Health.CheckIntervalSeconds))
-		c.JSON(response.HTTPStatus(), response)
-	})
-
-	// The per-service form of the same document. It is public on purpose: it is
-	// what a status page (and the per-check "self" links) polls, and it must
-	// report an unhealthy service as a failing document rather than a bare code.
-	r.GET("/health/:service", func(c *gin.Context) {
-		response, tracked := health.BuildServiceResponse(store, c.Param("service"), healthBaseURL(c))
-		status := response.HTTPStatus()
-		if !tracked {
-			status = http.StatusNotFound
-		}
-		c.Header("Content-Type", health.MediaTypeHealthJSON)
-		c.Header("Cache-Control", fmt.Sprintf("max-age=%d", cfg.Health.CheckIntervalSeconds))
-		c.JSON(status, response)
-	})
+	registerHealthRoutes(r, store, cfg)
 
 	r.Use(health.ReadinessMiddleware(store))
 
@@ -344,19 +332,7 @@ func main() {
 		c.JSON(http.StatusOK, capabilityAggregator.Document())
 	})
 
-	r.GET("/relays", func(c *gin.Context) {
-		if relayCatalog == nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "service discovery is disabled"})
-			return
-		}
-		relays, err := relayCatalog.List(c.Request.Context())
-		if err != nil {
-			logging.Log.Warn().Err(err).Msg("Failed to list relays")
-			c.JSON(http.StatusBadGateway, gin.H{"error": "unable to list relays"})
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{"relays": relays})
-	})
+	registerRelaysRoute(r, relayCatalog)
 
 	addr := ":" + cfg.Server.Port
 	srv := &http.Server{
@@ -433,6 +409,87 @@ func main() {
 	}
 
 	logging.Log.Info().Msg("Server exited")
+}
+
+// accessLogFormatter renders the same access log line as gin's default logger
+// but reports the address resolved by the gateway (proxy.ResolveClientIP)
+// instead of gin's c.ClientIP(). Gin's ClientIP honours X-Forwarded-For, so
+// without this a client could forge the address recorded in the access log,
+// which is the audit trail.
+func accessLogFormatter(trustedProxyHops int) gin.LogFormatter {
+	return func(p gin.LogFormatterParams) string {
+		latency := p.Latency
+		if latency > time.Minute {
+			latency = latency.Truncate(time.Second)
+		}
+		return fmt.Sprintf("[GIN] %v | %3d | %13v | %15s |%-7s %#v\n%s",
+			p.TimeStamp.Format("2006/01/02 - 15:04:05"),
+			p.StatusCode,
+			latency,
+			proxy.ResolveClientIP(p.Request, trustedProxyHops),
+			p.Method,
+			p.Path,
+			p.ErrorMessage,
+		)
+	}
+}
+
+// registerHealthRoutes mounts the gateway's health documents.
+//
+// Both routes are public and mounted ahead of the readiness gate. The overall
+// document is served to everyone, but the per-service checks map is only
+// included when the caller presents the discovery credential: it names and
+// reports every service behind the gateway, which is operator-only topology.
+func registerHealthRoutes(r *gin.Engine, store *health.ReadinessStore, cfg *config.Config) {
+	r.GET("/health", func(c *gin.Context) {
+		baseURL := healthBaseURL(c)
+		var response health.Response
+		if discovery.BearerMatches(c.GetHeader("Authorization"), cfg.Discovery.RegistrationToken) {
+			response = health.BuildResponse(store, baseURL)
+		} else {
+			response = health.BuildSummaryResponse(store)
+		}
+		c.Header("Content-Type", health.MediaTypeHealthJSON)
+		c.Header("Cache-Control", fmt.Sprintf("max-age=%d", cfg.Health.CheckIntervalSeconds))
+		c.JSON(response.HTTPStatus(), response)
+	})
+
+	// The per-service form of the same document. It is public on purpose: it is
+	// what a status page (and the per-check "self" links) polls, and it must
+	// report an unhealthy service as a failing document rather than a bare code.
+	r.GET("/health/:service", func(c *gin.Context) {
+		response, tracked := health.BuildServiceResponse(store, c.Param("service"), healthBaseURL(c))
+		status := response.HTTPStatus()
+		if !tracked {
+			status = http.StatusNotFound
+		}
+		c.Header("Content-Type", health.MediaTypeHealthJSON)
+		c.Header("Cache-Control", fmt.Sprintf("max-age=%d", cfg.Health.CheckIntervalSeconds))
+		c.JSON(status, response)
+	})
+}
+
+// registerRelaysRoute mounts the public relay catalog.
+//
+// GET /relays is an intentionally public, client-facing discovery contract, not
+// infrastructure inventory: clients dial the returned host:port and sort the
+// picker by region, weight, and health, so the fields cannot be hidden or
+// gated. The only protected routes are the control plane's PUT/DELETE
+// /relays/{id}, which relays authenticate with discovery.registrationToken.
+func registerRelaysRoute(r *gin.Engine, catalog *discovery.Catalog) {
+	r.GET("/relays", func(c *gin.Context) {
+		if catalog == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "service discovery is disabled"})
+			return
+		}
+		relays, err := catalog.List(c.Request.Context())
+		if err != nil {
+			logging.Log.Warn().Err(err).Msg("Failed to list relays")
+			c.JSON(http.StatusBadGateway, gin.H{"error": "unable to list relays"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"relays": relays})
+	})
 }
 
 // healthBaseURL rebuilds the origin the client used to reach the gateway,

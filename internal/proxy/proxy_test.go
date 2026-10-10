@@ -111,6 +111,122 @@ func TestProxyRequest_TargetWithPortAndPath(t *testing.T) {
 	}
 }
 
+func TestProxyRequest_StripsClientTrustHeaders(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	var got http.Header
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Clone()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+
+	rec := &closeNotifyRecorder{ResponseRecorder: httptest.NewRecorder()}
+	ctx, _ := gin.CreateTestContext(rec)
+	req := httptest.NewRequest(http.MethodGet, "/sphere/feed", nil)
+	req.RemoteAddr = "203.0.113.7:4321"
+	req.Header.Set("X-Account-Id", "00000000-0000-0000-0000-000000000001")
+	req.Header.Set("X-User-Id", "00000000-0000-0000-0000-000000000002")
+	req.Header.Set("X-Account-Email", "ceo@example.com")
+	req.Header.Set("X-Auth-Role", "root")
+	req.Header.Set("X-Real-IP", "10.0.0.1")
+	req.Header.Set("X-Forwarded-For", "10.0.0.1")
+	req.Header.Set("X-Forwarded-Proto", "https")
+	req.Header.Set("X-Forwarded-Host", "evil.example")
+	ctx.Request = req
+
+	p := &Proxy{}
+	p.proxyRequest(ctx, upstream.URL+"/api/feed")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", rec.Code)
+	}
+	for _, name := range []string{"X-Account-Id", "X-User-Id", "X-Account-Email", "X-Auth-Role"} {
+		if value := got.Get(name); value != "" {
+			t.Fatalf("upstream received client-supplied %s = %q", name, value)
+		}
+	}
+	if value := got.Get("X-Real-IP"); value != "203.0.113.7" {
+		t.Fatalf("X-Real-IP = %q, want the connection address", value)
+	}
+	if value := got.Get("X-Forwarded-For"); value != "203.0.113.7" {
+		t.Fatalf("X-Forwarded-For = %q, want the connection address", value)
+	}
+	if value := got.Get("X-Forwarded-Proto"); value != "http" {
+		t.Fatalf("X-Forwarded-Proto = %q, want the connection scheme", value)
+	}
+	if value := got.Get("X-Forwarded-Host"); value != "example.com" {
+		t.Fatalf("X-Forwarded-Host = %q, want the request host", value)
+	}
+}
+
+func TestProxyRequest_TrustedProxyHopsResolveClientIP(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	var got http.Header
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Clone()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+
+	rec := &closeNotifyRecorder{ResponseRecorder: httptest.NewRecorder()}
+	ctx, _ := gin.CreateTestContext(rec)
+	req := httptest.NewRequest(http.MethodGet, "/sphere/feed", nil)
+	// The peer is the trusted proxy; the real client is what it saw.
+	req.RemoteAddr = "192.0.2.10:5000"
+	req.Header.Set("X-Forwarded-For", "10.9.9.9, 198.51.100.9")
+	req.Header.Set("X-Forwarded-Proto", "https")
+	req.Header.Set("X-Forwarded-Host", "api.solian.app")
+	ctx.Request = req
+
+	p := &Proxy{trustedProxyHops: 1}
+	p.proxyRequest(ctx, upstream.URL+"/api/feed")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", rec.Code)
+	}
+	// One trusted hop: the rightmost entry is what the trusted proxy appended,
+	// and the entry to its left is client-supplied noise.
+	if value := got.Get("X-Forwarded-For"); value != "198.51.100.9" {
+		t.Fatalf("X-Forwarded-For = %q, want the address the trusted proxy observed", value)
+	}
+	if value := got.Get("X-Real-IP"); value != "198.51.100.9" {
+		t.Fatalf("X-Real-IP = %q, want the resolved client address", value)
+	}
+	if value := got.Get("X-Forwarded-Proto"); value != "https" {
+		t.Fatalf("X-Forwarded-Proto = %q, want the edge's protocol", value)
+	}
+	if value := got.Get("X-Forwarded-Host"); value != "api.solian.app" {
+		t.Fatalf("X-Forwarded-Host = %q, want the edge's host", value)
+	}
+}
+
+func TestProxyRequest_FallsBackToPeerWhenForwardedForIsTooShort(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	var got http.Header
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Clone()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+
+	rec := &closeNotifyRecorder{ResponseRecorder: httptest.NewRecorder()}
+	ctx, _ := gin.CreateTestContext(rec)
+	req := httptest.NewRequest(http.MethodGet, "/sphere/feed", nil)
+	req.RemoteAddr = "192.0.2.10:5000"
+	req.Header.Set("X-Forwarded-For", "10.9.9.9")
+	ctx.Request = req
+
+	p := &Proxy{trustedProxyHops: 2}
+	p.proxyRequest(ctx, upstream.URL+"/api/feed")
+
+	if value := got.Get("X-Forwarded-For"); value != "192.0.2.10" {
+		t.Fatalf("X-Forwarded-For = %q, want the peer when the chain is too short", value)
+	}
+}
+
 func TestProxyRequest_ReusesUpstreamConnections(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

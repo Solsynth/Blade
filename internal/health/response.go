@@ -80,20 +80,45 @@ func BuildResponse(store *ReadinessStore, baseURL string) Response {
 		response.Checks[name] = []Check{buildCheck(name, state, baseURL)}
 	}
 
-	switch {
-	case !store.IsCoreServiceHealthy():
-		response.Status = StatusFail
-		response.Output = "one or more core services are unhealthy"
-	case !allHealthy:
-		response.Status = StatusWarn
-		response.Output = "one or more non-core services are unhealthy"
-	}
+	response.Status, response.Output = overallStatus(store, allHealthy)
 
 	if baseURL != "" {
 		response.Links = map[string]string{"self": baseURL + healthPath}
 	}
 
 	return response
+}
+
+// BuildSummaryResponse renders only the gateway's overall status, without the
+// per-service checks map. It is what an unauthenticated caller gets, so the
+// document never names or reports the services behind the gateway.
+func BuildSummaryResponse(store *ReadinessStore) Response {
+	allHealthy := true
+	for _, state := range store.GetAllStates() {
+		if !state.IsHealthy {
+			allHealthy = false
+		}
+	}
+	status, output := overallStatus(store, allHealthy)
+
+	return Response{
+		Status:      status,
+		ServiceID:   serviceID,
+		Description: serviceDescription,
+		Output:      output,
+	}
+}
+
+// overallStatus maps the readiness snapshot onto the document status and its
+// human-readable output, shared by the full and summary documents.
+func overallStatus(store *ReadinessStore, allHealthy bool) (string, string) {
+	switch {
+	case !store.IsCoreServiceHealthy():
+		return StatusFail, "one or more core services are unhealthy"
+	case !allHealthy:
+		return StatusWarn, "one or more non-core services are unhealthy"
+	}
+	return StatusPass, ""
 }
 
 // BuildServiceResponse renders a single service's slice of the snapshot, the
