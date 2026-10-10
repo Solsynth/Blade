@@ -17,18 +17,17 @@ import (
 
 const testInternalToken = "internal-secret"
 
-func TestHealthEndpointHidesChecksFromAnonymousCallers(t *testing.T) {
+// GET /health is the public client-facing status surface: an anonymous caller
+// gets the full document, including the per-service checks map.
+func TestHealthEndpointServesChecksToAnonymousCallers(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	store := health.NewReadinessStore([]string{"ring"})
 	store.UpdateService(health.ServiceState{ServiceName: "ring", IsHealthy: true, LastChecked: time.Now()})
 	store.UpdateService(health.ServiceState{ServiceName: "sphere", IsHealthy: true, LastChecked: time.Now()})
 
-	cfg := &config.Config{}
-	cfg.Discovery.RegistrationToken = testInternalToken
-
 	router := gin.New()
-	registerHealthRoutes(router, store, cfg)
+	registerHealthRoutes(router, store, &config.Config{})
 
 	anonymous := httptest.NewRecorder()
 	router.ServeHTTP(anonymous, httptest.NewRequest(http.MethodGet, "/health", nil))
@@ -38,19 +37,8 @@ func TestHealthEndpointHidesChecksFromAnonymousCallers(t *testing.T) {
 	if !strings.Contains(anonymous.Body.String(), `"status":"pass"`) {
 		t.Fatalf("anonymous body = %s, want the overall status", anonymous.Body.String())
 	}
-	if strings.Contains(anonymous.Body.String(), `"checks"`) {
-		t.Fatalf("anonymous body = %s, want no per-service checks map", anonymous.Body.String())
-	}
-
-	request := httptest.NewRequest(http.MethodGet, "/health", nil)
-	request.Header.Set("Authorization", "Bearer "+testInternalToken)
-	trusted := httptest.NewRecorder()
-	router.ServeHTTP(trusted, request)
-	if trusted.Code != http.StatusOK {
-		t.Fatalf("trusted status = %d, body = %s", trusted.Code, trusted.Body.String())
-	}
-	if !strings.Contains(trusted.Body.String(), `"checks"`) || !strings.Contains(trusted.Body.String(), `"ring"`) {
-		t.Fatalf("trusted body = %s, want the per-service checks map", trusted.Body.String())
+	if !strings.Contains(anonymous.Body.String(), `"checks"`) || !strings.Contains(anonymous.Body.String(), `"ring"`) {
+		t.Fatalf("anonymous body = %s, want the per-service checks map", anonymous.Body.String())
 	}
 }
 

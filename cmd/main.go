@@ -436,19 +436,14 @@ func accessLogFormatter(trustedProxyHops int) gin.LogFormatter {
 
 // registerHealthRoutes mounts the gateway's health documents.
 //
-// Both routes are public and mounted ahead of the readiness gate. The overall
-// document is served to everyone, but the per-service checks map is only
-// included when the caller presents the discovery credential: it names and
-// reports every service behind the gateway, which is operator-only topology.
+// Both routes are public and mounted ahead of the readiness gate. The full
+// document — including the per-service checks map — is served to everyone by
+// design: it is the client-facing status surface the app polls, so the tracked
+// service names are disclosed to anonymous callers and that disclosure is an
+// accepted risk, not operator-only topology.
 func registerHealthRoutes(r *gin.Engine, store *health.ReadinessStore, cfg *config.Config) {
 	r.GET("/health", func(c *gin.Context) {
-		baseURL := healthBaseURL(c)
-		var response health.Response
-		if discovery.BearerMatches(c.GetHeader("Authorization"), cfg.Discovery.RegistrationToken) {
-			response = health.BuildResponse(store, baseURL)
-		} else {
-			response = health.BuildSummaryResponse(store)
-		}
+		response := health.BuildResponse(store, healthBaseURL(c))
 		c.Header("Content-Type", health.MediaTypeHealthJSON)
 		c.Header("Cache-Control", fmt.Sprintf("max-age=%d", cfg.Health.CheckIntervalSeconds))
 		c.JSON(response.HTTPStatus(), response)

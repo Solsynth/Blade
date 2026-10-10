@@ -89,28 +89,8 @@ func BuildResponse(store *ReadinessStore, baseURL string) Response {
 	return response
 }
 
-// BuildSummaryResponse renders only the gateway's overall status, without the
-// per-service checks map. It is what an unauthenticated caller gets, so the
-// document never names or reports the services behind the gateway.
-func BuildSummaryResponse(store *ReadinessStore) Response {
-	allHealthy := true
-	for _, state := range store.GetAllStates() {
-		if !state.IsHealthy {
-			allHealthy = false
-		}
-	}
-	status, output := overallStatus(store, allHealthy)
-
-	return Response{
-		Status:      status,
-		ServiceID:   serviceID,
-		Description: serviceDescription,
-		Output:      output,
-	}
-}
-
 // overallStatus maps the readiness snapshot onto the document status and its
-// human-readable output, shared by the full and summary documents.
+// human-readable output.
 func overallStatus(store *ReadinessStore, allHealthy bool) (string, string) {
 	switch {
 	case !store.IsCoreServiceHealthy():

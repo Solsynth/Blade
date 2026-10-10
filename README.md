@@ -217,7 +217,7 @@ docker run -p 443:443 -v ./relay.toml:/app/configs/relay.toml blade-relay
 
 | Endpoint                | Description                                                        |
 | ----------------------- | ------------------------------------------------------------------ |
-| `GET /health`           | Gateway health document; per-service `checks` only with the discovery credential |
+| `GET /health`           | Gateway health document (`application/health+json`, never gated)   |
 | `GET /health/{service}` | Per-service health document (`200` pass, `503` fail, `404` unknown) |
 | `GET /relays`           | Public client-facing catalog of registered L4 relay nodes |
 | `/<service>/**`         | Proxied to backend service (e.g., `/ring/**` → `ring:5000/api/**`) |
@@ -234,13 +234,8 @@ docker run -p 443:443 -v ./relay.toml:/app/configs/relay.toml blade-relay
 format and is mounted ahead of the readiness gate, so it reports *why* the
 gateway is not ready instead of the gate's generic `503`. `status` is `fail`
 (HTTP `503`) when any core service is unhealthy, `warn` (HTTP `200`) when only
-non-core services are, and `pass` (HTTP `200`) otherwise. The per-service
-`checks` map names the internal topology, so it is included only for a caller
-presenting the discovery credential (`Authorization: Bearer
-<discovery.registrationToken>`); every other caller gets the overall document
-(no `checks`), which is enough to report readiness without publishing the
-roster. When the credential is included, each tracked service appears under
-`checks` as a one-element array.
+non-core services are, and `pass` (HTTP `200`) otherwise. Each tracked service
+appears under `checks` as a one-element array.
 
 ```json
 {
